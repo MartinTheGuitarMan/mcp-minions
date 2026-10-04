@@ -20,6 +20,14 @@ class BackendError(MinionError):
 class SchemaError(MinionError):
     code = "MINION_SCHEMA"
 
+    def __init__(self, message: str, raw: str = ""):
+        super().__init__(message)
+        self.raw = raw  # the model's unparsed output, kept so a judge can repair it
+
+
+class NoQuorum(MinionError):
+    code = "MINION_NO_QUORUM"
+
 
 class BadInput(MinionError):
     code = "MINION_BAD_INPUT"

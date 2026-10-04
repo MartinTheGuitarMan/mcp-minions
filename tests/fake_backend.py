@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class FakeBackend:
     def __init__(self):
-        self.requests, self.replies = [], []
+        self.requests, self.replies, self.by_model = [], [], {}
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -16,7 +16,8 @@ class FakeBackend:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 outer.requests.append((self.path, body))
-                content = outer.replies.pop(0) if outer.replies else "{}"
+                q = outer.by_model.get(body.get("model"))
+                content = q.pop(0) if q else (outer.replies.pop(0) if outer.replies else "{}")
                 status, payload = 200, {"choices": [{"message": {"content": content}}]}
                 if isinstance(content, tuple):
                     status, payload = content
@@ -34,3 +35,6 @@ class FakeBackend:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+    def calls(self, model):
+        return [b for _, b in self.requests if b.get("model") == model]

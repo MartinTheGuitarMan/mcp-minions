@@ -1,3 +1,4 @@
+"""Fast path: constrained decoding requested, output validated by us anyway."""
 from __future__ import annotations
 
 import json
@@ -20,13 +21,14 @@ def wrap_data(text: str) -> str:
 
 
 def run(cfg: Config, task: str, text: str, schema: dict, name: str = "result") -> dict:
-    raw = backends.complete_json(cfg, SYSTEM, f"{task}\n\n{wrap_data(text)}", schema, name)
+    messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": f"{task}\n\n{wrap_data(text)}"}]
+    raw = backends.complete(cfg, messages, schema, name)
     try:
         obj = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise SchemaError(f"model output is not valid JSON: {raw[:200]!r}") from e
+        raise SchemaError(f"{cfg.name}: model output is not valid JSON: {raw[:200]!r}", raw) from e
     try:
         jsonschema.validate(obj, schema)
     except jsonschema.ValidationError as e:
-        raise SchemaError(f"model output violates schema: {e.message}; output={raw[:200]!r}") from e
+        raise SchemaError(f"{cfg.name}: model output violates schema: {e.message}; output={raw[:200]!r}", raw) from e
     return obj
