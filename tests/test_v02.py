@@ -205,3 +205,19 @@ def test_truncation_twice_fails_with_a_clear_reason(fake):
     fake.by_model.update(j=[{"content": "", "finish_reason": "length"}] * 2)
     with pytest.raises(SchemaError, match="token budget ran out"):
         judge.verify_classification(roster(fake).models["j"], "t", "x", LABELS, {})
+
+
+# ---------- MCP layer ----------
+def test_server_tools_surface_minion_codes_as_tool_errors(monkeypatch, tmp_path):
+    import asyncio
+    from mcp.server.mcpserver.exceptions import ToolError
+    import minions.server as server
+    monkeypatch.setenv("MINION_MODEL", "m")
+    monkeypatch.setenv("MINION_BASE_URL", "http://127.0.0.1:9/v1")   # nothing listens here
+    monkeypatch.setenv("MINION_TIMEOUT", "2")
+    with pytest.raises(ToolError, match="MINION_DOWN"):
+        asyncio.run(server.mcp.call_tool("classify", {"text": "x", "labels": ["a", "b"]}))
+    with pytest.raises(ToolError, match="MINION_BAD_INPUT"):
+        asyncio.run(server.mcp.call_tool("classify", {"text": "x", "labels": []}))
+    with pytest.raises(ToolError, match="MINION_BAD_INPUT"):
+        asyncio.run(server.mcp.call_tool("summarize_file", {"path": str(tmp_path / "nope.txt")}))
