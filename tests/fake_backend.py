@@ -1,12 +1,14 @@
 """Minimal OpenAI-compatible server for tests. Records requests, replies with queued content."""
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 class FakeBackend:
     def __init__(self):
         self.requests, self.replies, self.by_model = [], [], {}
+        self.delay, self.inflight, self.max_inflight, self._lock = 0.0, 0, 0, threading.Lock()
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -15,6 +17,12 @@ class FakeBackend:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                with outer._lock:
+                    outer.inflight += 1
+                    outer.max_inflight = max(outer.max_inflight, outer.inflight)
+                time.sleep(outer.delay)
+                with outer._lock:
+                    outer.inflight -= 1
                 outer.requests.append((self.path, body))
                 q = outer.by_model.get(body.get("model"))
                 content = q.pop(0) if q else (outer.replies.pop(0) if outer.replies else "{}")

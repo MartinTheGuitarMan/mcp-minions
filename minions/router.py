@@ -2,7 +2,7 @@
 Hard failures (MINION_DOWN, backend errors) always propagate; the judge never papers over them."""
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 from . import engine, judge as judge_mod
@@ -21,11 +21,22 @@ def run(roster: Roster, tool: str, task: str, text: str, schema: dict, name: str
         except SchemaError as e:
             return m, None, e
 
-    if len(route.fast) == 1:
-        outs = [one(route.fast[0])]
+    # Models on the same server run one after another (LM Studio swaps models in and out on demand, so
+    # concurrent requests to two different models on one server evict each other mid-request). Different
+    # servers run in parallel.
+    groups = defaultdict(list)
+    for i, m in enumerate(route.fast):
+        groups[(m.backend, m.base_url)].append((i, m))
+
+    def run_group(items):
+        return [(i, one(m)) for i, m in items]
+
+    if len(groups) == 1:
+        done = run_group(next(iter(groups.values())))
     else:
-        with ThreadPoolExecutor(len(route.fast)) as ex:
-            outs = list(ex.map(one, route.fast))   # non-schema errors propagate from here
+        with ThreadPoolExecutor(len(groups)) as ex:
+            done = [x for part in ex.map(run_group, groups.values()) for x in part]  # hard errors propagate
+    outs = [o for _, o in sorted(done, key=lambda t: t[0])]
     valid = [(m, r) for m, r, e in outs if r is not None]
     failures = [(m, e) for m, r, e in outs if e is not None]
     meta["schema_failures"] = [m.name for m, _ in failures]

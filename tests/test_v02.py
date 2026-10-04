@@ -161,3 +161,28 @@ def test_reasoning_truncated_think_block_is_retried(fake):
     from minions import judge
     out, _ = judge.verify_classification(roster(fake).models["j"], "t", "x", LABELS, {})
     assert out["label"] == "negative"
+
+
+# ---------- concurrency ----------
+def test_models_on_one_server_run_sequentially(fake):
+    fake.delay = 0.15
+    fake.by_model.update(f1=[L("positive")], f2=[L("positive")], f3=[L("positive")])
+    tools.classify(roster(fake), "x", LABELS)
+    assert fake.max_inflight == 1
+
+
+def test_models_on_different_servers_run_in_parallel():
+    from fake_backend import FakeBackend
+    import time
+    a, b = FakeBackend(), FakeBackend()
+    try:
+        a.delay = b.delay = 0.4
+        a.by_model["m1"], b.by_model["m2"] = [L("positive")], [L("positive")]
+        models = {"m1": {"backend": "lmstudio", "base_url": a.url, "model": "m1"},
+                  "m2": {"backend": "ollama", "base_url": b.url, "model": "m2"}}
+        r = Roster.from_dict({"models": models, "routes": {"classify": {"fast": ["m1", "m2"], "quorum": 2}}})
+        t = time.time()
+        assert tools.classify(r, "x", LABELS) == {"label": "positive"}
+        assert time.time() - t < 0.75      # two 0.4s calls overlapped, not 0.8s back to back
+    finally:
+        a.close(); b.close()
