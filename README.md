@@ -18,7 +18,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 - **Schema first, then verify.** Each call asks the backend for schema-constrained JSON, and then checks the reply with `jsonschema`. Whether a backend actually enforces the schema varies, so a reply that is not valid JSON or does not match the schema is an error, not a guess.
 - **No silent fallback.** If the backend is down you get `MINION_DOWN`. Nothing is retried on another model.
 - **Untrusted input.** Your text is wrapped in `<data>` tags, a closing `</data>` inside it is neutralised, and the system prompt tells the model never to follow instructions found in the data. This reduces prompt-injection risk. It is not a guarantee, which is why the output schema is checked in code.
-- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`.
+- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, and (v0.2) `MINION_NO_QUORUM`.
 
 ## Install and run
 
@@ -56,6 +56,31 @@ Example MCP client entry (the exact file and format depend on your client):
 | `MINION_MAX_FILE_BYTES` | `1000000` | Size cap for the `*_file` tools |
 | `MINION_OLLAMA_NATIVE` | unset | Set to `1` to use Ollama's native `/api/chat` `format` instead of `response_format` |
 
+## Roster, quorum and judge (v0.2)
+
+Set `MINION_ROSTER` to inline JSON or a path to a JSON file to use several models. Without it, the single-model setup above applies unchanged.
+
+```json
+{
+  "models": {
+    "g1":  {"backend": "lmstudio", "model": "google/gemma-3-1b",   "kind": "fast"},
+    "e4b": {"backend": "lmstudio", "model": "google/gemma-4-e4b",  "kind": "fast"},
+    "q9":  {"backend": "ollama",   "model": "qwen3.5:9b", "kind": "reasoning", "max_tokens": 4096}
+  },
+  "routes": {
+    "classify":  {"fast": ["g1", "e4b"], "quorum": 2, "judge": "q9"},
+    "extract":   {"fast": ["e4b"], "judge": "q9"},
+    "summarize": {"fast": ["g1"]}
+  }
+}
+```
+
+- **`kind: fast`** models use constrained decoding (schema requested, then validated by us). **`kind: reasoning`** models are called without constrained decoding: they think freely, the think block is stripped, the last JSON object is extracted and validated against the schema by us, with one retry that feeds the error back.
+- **Quorum (classify only).** Every fast model in the route votes; a label wins with at least `quorum` votes (default: majority) and a strict lead.
+- **Judge.** Runs only on disagreement or schema failure, never otherwise. It *verifies* the proposals (`confirm` one, or `correct` it) instead of redoing the task; on a schema failure it repairs the fast model's invalid output. With no judge configured, disagreement raises `MINION_NO_QUORUM` and a schema failure raises `MINION_SCHEMA`.
+- **Hard failures are never routed around.** `MINION_DOWN` and backend errors from any model propagate; the judge is not used to mask them.
+- Set `MINION_META=1` to add a `_minion` key (votes, judge used) to results.
+
 ## Security note
 
 The `*_file` tools read **any UTF-8 text file** the caller names (up to the size cap). Whoever can call this server can therefore read files your user account can read. Only connect clients you trust, and leave the file tools out of any setup where that is a problem.
@@ -74,7 +99,7 @@ uv run python scripts/smoke.py ollama <your-model> --repeat 5
 
 ## Status
 
-Version 0.1. Early and small; expect changes.
+Version 0.2. Early and small; expect changes.
 
 ## License
 
