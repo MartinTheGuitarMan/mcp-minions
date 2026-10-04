@@ -221,3 +221,59 @@ def test_server_tools_surface_minion_codes_as_tool_errors(monkeypatch, tmp_path)
         asyncio.run(server.mcp.call_tool("classify", {"text": "x", "labels": []}))
     with pytest.raises(ToolError, match="MINION_BAD_INPUT"):
         asyncio.run(server.mcp.call_tool("summarize_file", {"path": str(tmp_path / "nope.txt")}))
+
+
+# ---------- position-bias mitigation ----------
+def enum_of(body):
+    return body["response_format"]["json_schema"]["schema"]["properties"]["label"]["enum"]
+
+
+def test_quorum_models_get_rotated_label_orders(fake):
+    fake.by_model.update(f1=[L("positive")], f2=[L("positive")], f3=[L("positive")])
+    tools.classify(roster(fake), "x", LABELS)
+    assert enum_of(fake.calls("f1")[0]) == ["positive", "negative", "neutral"]
+    assert enum_of(fake.calls("f2")[0]) == ["negative", "neutral", "positive"]
+    assert enum_of(fake.calls("f3")[0]) == ["neutral", "positive", "negative"]
+    # the task text lists the same order the schema uses
+    assert "negative, neutral, positive" in fake.calls("f2")[0]["messages"][1]["content"]
+
+
+def test_single_model_with_judge_is_asked_twice_in_opposite_orders(fake):
+    fake.by_model.update(f1=[L("positive"), L("positive")])
+    assert tools.classify(roster(fake, fast=("f1",)), "x", LABELS) == {"label": "positive"}
+    a, b = fake.calls("f1")
+    assert enum_of(a) == LABELS and enum_of(b) == list(reversed(LABELS))
+    assert fake.calls("j") == []
+
+
+def test_position_bias_mismatch_goes_to_judge(fake):
+    fake.by_model.update(f1=[L("negative"), L("positive")], j=['{"verdict":"correct","label":"positive"}'])
+    assert tools.classify(roster(fake, fast=("f1",)), "I love it", ["positive", "negative"]) == {"label": "positive"}
+    assert len(fake.calls("f1")) == 2 and len(fake.calls("j")) == 1
+
+
+def test_single_model_without_judge_stays_a_single_call(fake):
+    fake.by_model.update(f1=[L("positive")])
+    assert tools.classify(roster(fake, fast=("f1",), judge=None), "x", LABELS) == {"label": "positive"}
+    assert len(fake.calls("f1")) == 1
+
+
+def test_debias_can_be_switched_off_and_on_explicitly(fake):
+    base = {"f1": {"backend": "lmstudio", "base_url": fake.url, "model": "f1"},
+            "j": {"backend": "lmstudio", "base_url": fake.url, "model": "j", "kind": "reasoning"}}
+    off = Roster.from_dict({"models": base, "routes": {"classify": {"fast": ["f1"], "judge": "j", "debias": False}}})
+    on = Roster.from_dict({"models": base, "routes": {"classify": {"fast": ["f1"], "debias": True}}})
+    assert off.route("classify").debias is False and on.route("classify").debias is True
+    fake.by_model.update(f1=[L("positive")])
+    tools.classify(off, "x", LABELS)
+    assert len(fake.calls("f1")) == 1
+    fake.by_model.update(f1=[L("positive"), L("negative")])
+    with pytest.raises(NoQuorum):          # debias on, no judge: a mismatch is reported, not guessed
+        tools.classify(on, "x", LABELS)
+
+
+def test_debias_never_applies_outside_classify(fake):
+    base = {"f1": {"backend": "lmstudio", "base_url": fake.url, "model": "f1"},
+            "j": {"backend": "lmstudio", "base_url": fake.url, "model": "j", "kind": "reasoning"}}
+    r = Roster.from_dict({"models": base, "routes": {"extract": {"fast": ["f1"], "judge": "j", "debias": True}}})
+    assert r.route("extract").debias is False

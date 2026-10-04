@@ -49,6 +49,7 @@ class Route:
     fast: tuple          # Configs; more than one only for classify (quorum)
     judge: Config | None
     quorum: int
+    debias: bool = False   # classify with ONE fast model: ask twice with the label order reversed
 
 
 @dataclass(frozen=True)
@@ -127,5 +128,8 @@ class Roster:
             quorum = int(r.get("quorum", len(fast) // 2 + 1))
             if not 1 <= quorum <= len(fast):
                 raise BadConfig(f"route {tool!r}: quorum must be between 1 and {len(fast)}")
-            routes[tool] = Route(fast, judge, quorum)
+            debias = r.get("debias")
+            if debias is None:   # auto: worth the extra call only when a judge can resolve a mismatch
+                debias = tool == "classify" and len(fast) == 1 and judge is not None
+            routes[tool] = Route(fast, judge, quorum, bool(debias) and tool == "classify" and len(fast) == 1)
         return cls(models, routes, max_file_bytes, meta)

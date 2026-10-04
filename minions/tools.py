@@ -22,9 +22,9 @@ def read_text_file(cfg, path: str) -> str:
         raise BadInput(f"file is not valid UTF-8: {path}") from e
 
 
-def _go(cfg, tool, task, text, schema, name, labels=None) -> dict:
+def _go(cfg, tool, build, text, name, labels=None) -> dict:
     roster = Roster.coerce(cfg)
-    out, meta = router.run(roster, tool, task, text, schema, name, labels)
+    out, meta = router.run(roster, tool, build, text, name, labels)
     return {**out, "_minion": meta} if roster.meta else out
 
 
@@ -39,10 +39,13 @@ def classify(cfg, text: str, labels: list[str], hint: str = "") -> dict:
         raise BadInput("labels must be a non-empty list of unique non-empty strings")
     if len(labels) > 50:
         raise BadInput("at most 50 labels")
-    schema = {"type": "object", "properties": {"label": {"type": "string", "enum": list(labels)}},
-              "required": ["label"], "additionalProperties": False}
-    task = f"Classify the data into exactly one of: {', '.join(labels)}." + (f" {hint}" if hint else "")
-    return _go(cfg, "classify", task, text, schema, "classification", labels)
+    def build(order=None):
+        order = list(order or labels)
+        schema = {"type": "object", "properties": {"label": {"type": "string", "enum": order}},
+                  "required": ["label"], "additionalProperties": False}
+        return f"Classify the data into exactly one of: {', '.join(order)}." + (f" {hint}" if hint else ""), schema
+
+    return _go(cfg, "classify", build, text, "classification", list(labels))
 
 
 def extract(cfg, text: str, schema: dict, hint: str = "") -> dict:
@@ -54,7 +57,7 @@ def extract(cfg, text: str, schema: dict, hint: str = "") -> dict:
     except jsonschema.SchemaError as e:
         raise BadInput(f"invalid JSON Schema: {e.message}") from e
     task = "Extract the requested fields from the data. Use only what the data states." + (f" {hint}" if hint else "")
-    return _go(cfg, "extract", task, text, schema, "extraction")
+    return _go(cfg, "extract", lambda order=None: (task, schema), text, "extraction")
 
 
 def summarize(cfg, text: str, max_words: int = 100) -> dict:
@@ -63,4 +66,5 @@ def summarize(cfg, text: str, max_words: int = 100) -> dict:
         raise BadInput("max_words must be between 5 and 1000")
     schema = {"type": "object", "properties": {"summary": {"type": "string"}},
               "required": ["summary"], "additionalProperties": False}
-    return _go(cfg, "summarize", f"Summarize the data in at most {max_words} words.", text, schema, "summary")
+    task = f"Summarize the data in at most {max_words} words."
+    return _go(cfg, "summarize", lambda order=None: (task, schema), text, "summary")

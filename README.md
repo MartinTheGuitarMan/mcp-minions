@@ -78,7 +78,9 @@ Set `MINION_ROSTER` to inline JSON or a path to a JSON file to use several model
 - **`kind: fast`** models use constrained decoding (schema requested, then validated by us). **`kind: reasoning`** models are called without constrained decoding: they think freely, the think block is stripped, the last JSON object is extracted and validated against the schema by us, with one retry that feeds the error back.
 - **Quorum (classify only).** Every fast model in the route votes; a label wins with at least `quorum` votes (default: majority) and a strict lead.
 - **Judge.** Runs only on disagreement or schema failure, never otherwise. It *verifies* the proposals (`confirm` one, or `correct` it) instead of redoing the task; on a schema failure it repairs the fast model's invalid output. With no judge configured, disagreement raises `MINION_NO_QUORUM` and a schema failure raises `MINION_SCHEMA`.
+- **Position-bias mitigation.** Small models are sensitive to label order (in testing, a 1B model labelled "I love this" as negative with `[positive, negative]` and correctly with the order flipped). With several fast models each gets the labels in a different rotation. With a single fast model and a judge, the model is asked twice, original and reversed order, and a mismatch counts as a disagreement. Control it per route with `"debias": true/false`; it never applies outside `classify`, and a single model with no judge stays a single call.
 - **Hard failures are never routed around.** `MINION_DOWN` and backend errors from any model propagate; the judge is not used to mask them.
+- Models that share a server are called one after another, because LM Studio swaps models in and out and concurrent requests to two models on one server evict each other. Different servers run in parallel.
 - Set `MINION_META=1` to add a `_minion` key (votes, judge used) to results.
 
 ## Security note
