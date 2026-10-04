@@ -26,7 +26,11 @@ class FakeBackend:
                 outer.requests.append((self.path, body))
                 q = outer.by_model.get(body.get("model"))
                 content = q.pop(0) if q else (outer.replies.pop(0) if outer.replies else "{}")
-                status, payload = 200, {"choices": [{"message": {"content": content}}]}
+                if isinstance(content, dict):
+                    status, payload = 200, {"choices": [{"message": {"content": content["content"]},
+                                                         "finish_reason": content["finish_reason"]}]}
+                else:
+                    status, payload = 200, {"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}
                 if isinstance(content, tuple):
                     status, payload = content
                 data = json.dumps(payload).encode()

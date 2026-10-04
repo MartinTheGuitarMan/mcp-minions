@@ -28,6 +28,13 @@ def _post(cfg: Config, url: str, payload: dict) -> dict:
 def complete(cfg: Config, messages: list, schema: dict | None = None, name: str = "result",
              max_tokens: int | None = None) -> str:
     """Return the raw assistant message content. schema=None means unconstrained (free) generation."""
+    return complete_ex(cfg, messages, schema, name, max_tokens)[0]
+
+
+def complete_ex(cfg: Config, messages: list, schema: dict | None = None, name: str = "result",
+                max_tokens: int | None = None) -> tuple[str, str]:
+    """Like complete, but also returns the finish reason ("length" means the token budget ran out,
+    which for a thinking model usually leaves the content empty)."""
     if cfg.backend == "ollama" and cfg.ollama_native:
         payload = {"model": cfg.model, "messages": messages, "stream": False, "options": {"temperature": 0}}
         if schema is not None:
@@ -36,7 +43,8 @@ def complete(cfg: Config, messages: list, schema: dict | None = None, name: str 
             payload["options"]["num_predict"] = max_tokens
         body = _post(cfg, f"{cfg.base_url.removesuffix('/v1')}/api/chat", payload)
         try:
-            return body["message"]["content"]
+            finish = "length" if body.get("done_reason") == "length" else "stop"
+            return body["message"]["content"] or "", finish
         except (KeyError, TypeError) as e:
             raise BackendError(f"unexpected ollama response shape: {str(body)[:200]}") from e
     payload = {"model": cfg.model, "messages": messages, "temperature": 0}
@@ -47,6 +55,7 @@ def complete(cfg: Config, messages: list, schema: dict | None = None, name: str 
         payload["max_tokens"] = max_tokens
     body = _post(cfg, f"{cfg.base_url}/chat/completions", payload)
     try:
-        return body["choices"][0]["message"]["content"] or ""
+        ch = body["choices"][0]
+        return ch["message"]["content"] or "", ch.get("finish_reason") or "stop"
     except (KeyError, IndexError, TypeError) as e:
         raise BackendError(f"unexpected response shape: {str(body)[:200]}") from e

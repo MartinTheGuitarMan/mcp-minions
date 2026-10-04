@@ -12,6 +12,7 @@ from .config import Config
 from .errors import SchemaError
 
 DEFAULT_MAX_TOKENS = 4096
+MAX_TOKENS_CAP = 8192
 _DECODER = json.JSONDecoder()
 
 
@@ -53,12 +54,18 @@ def extract_json(text: str) -> dict:
 def run(cfg: Config, system: str, user: str, schema: dict, validator=None) -> dict:
     """validator(obj) may raise ValueError for semantic checks beyond the schema."""
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-    last = "unknown"
+    last, budget, truncated = "unknown", cfg.max_tokens or DEFAULT_MAX_TOKENS, False
     for attempt in (1, 2):
-        raw = backends.complete(cfg, messages, None, max_tokens=cfg.max_tokens or DEFAULT_MAX_TOKENS)
+        if truncated:
+            budget = min(budget * 2, MAX_TOKENS_CAP)   # one retry with a bigger budget
+        raw, finish = backends.complete_ex(cfg, messages, None, max_tokens=budget)
+        truncated = finish == "length"
         answer = ""
         try:
             answer = strip_think(raw)
+            if not answer:
+                raise Invalid("empty reply: the token budget ran out while thinking (finish_reason=length)"
+                              if truncated else "empty reply")
             obj = extract_json(answer)
             try:
                 jsonschema.validate(obj, schema)
@@ -73,9 +80,10 @@ def run(cfg: Config, system: str, user: str, schema: dict, validator=None) -> di
         except Invalid as e:
             last = str(e)
             tail = answer or raw[-1500:]
+            hint = " Keep your thinking very short." if truncated else ""
             messages = messages + [
                 {"role": "assistant", "content": tail[-3000:]},
                 {"role": "user", "content": f"Your reply was rejected: {last}. Reply again with only the "
-                                            "corrected JSON object matching the schema."},
+                                            f"corrected JSON object matching the schema.{hint}"},
             ]
     raise SchemaError(f"{cfg.name}: reasoning model failed validation after one retry: {last}")

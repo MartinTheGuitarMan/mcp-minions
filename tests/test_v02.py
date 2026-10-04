@@ -186,3 +186,22 @@ def test_models_on_different_servers_run_in_parallel():
         assert time.time() - t < 0.75      # two 0.4s calls overlapped, not 0.8s back to back
     finally:
         a.close(); b.close()
+
+
+# ---------- truncation ----------
+def test_truncated_thinking_is_reported_and_retried_with_bigger_budget(fake):
+    from minions import judge
+    fake.by_model.update(j=[{"content": "", "finish_reason": "length"}, '{"verdict":"correct","label":"neutral"}'])
+    out, _ = judge.verify_classification(roster(fake).models["j"], "t", "x", LABELS, {})
+    assert out["label"] == "neutral"
+    first, second = fake.calls("j")
+    assert second["max_tokens"] == 2 * first["max_tokens"]
+    assert "token budget ran out" in second["messages"][-1]["content"]
+    assert "very short" in second["messages"][-1]["content"]
+
+
+def test_truncation_twice_fails_with_a_clear_reason(fake):
+    from minions import judge
+    fake.by_model.update(j=[{"content": "", "finish_reason": "length"}] * 2)
+    with pytest.raises(SchemaError, match="token budget ran out"):
+        judge.verify_classification(roster(fake).models["j"], "t", "x", LABELS, {})
