@@ -79,11 +79,13 @@ def items(model: Roster, name: str, quorum_only: bool = False):
             yield f"ask/{a['kind']}-premise", f"a{i}", f
 
 
-def run_model(roster: Roster, name: str, cap: int | None, quorum_only: bool = False) -> dict:
+def run_model(roster: Roster, name: str, cap: int | None, quorum_only: bool = False, only: str | None = None) -> dict:
     model = roster if quorum_only else single(roster, name)
     stats = {"name": name, "tasks": {}, "latency": [], "rate_limited": 0, "schema_fail": 0, "errors": [], "raw": []}
     calls = 0
     for task, iid, fn in items(model, name, quorum_only):
+        if only and only not in task:
+            continue
         if cap is not None and calls >= cap:
             break
         calls += 1
@@ -120,6 +122,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models"), ap.add_argument("--max-calls", action="append", default=[])
     ap.add_argument("--quorum", action="store_true"), ap.add_argument("--only-quorum", action="store_true")
+    ap.add_argument("--only", help="run only items whose task name contains this text, e.g. hard")
     ap.add_argument("--out")
     a = ap.parse_args()
     roster = Roster.from_env()
@@ -128,9 +131,9 @@ def main():
     results = []
     if not a.only_quorum:
         with ThreadPoolExecutor(len(names)) as ex:   # one thread per model; a model's own calls stay sequential
-            results = list(ex.map(lambda n: run_model(roster, n, caps.get(n)), names))
+            results = list(ex.map(lambda n: run_model(roster, n, caps.get(n), only=a.only), names))
     if a.quorum or a.only_quorum:
-        results.append(run_model(roster, "QUORUM(classify)", None, quorum_only=True))
+        results.append(run_model(roster, "QUORUM(classify)", None, quorum_only=True, only=a.only))
     tasks = sorted({t for r in results for t in r["tasks"]})
     print("| model | " + " | ".join(tasks) + " | schema fails | 429s | p50 s | no answer |")
     print("|---|" + "---|" * (len(tasks) + 4))
