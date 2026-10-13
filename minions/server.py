@@ -73,6 +73,15 @@ def summarize_file(path: str, max_words: int = 100) -> dict:
 
 @mcp.tool()
 @guarded
+def ask(question: str, sensitive: bool = True) -> dict:
+    """Short answer to an open question from a model trusted with knowledge questions (it said no to a made-up
+    paper). Never use for anything that must be exactly right. sensitive=false (nothing private in the question)
+    allows cloud models."""
+    return tools.ask(Roster.from_env(), question, sensitive)
+
+
+@mcp.tool()
+@guarded
 def minion_status() -> dict:
     """List the configured minions: local or cloud, capabilities, whether a key is set, requests used this minute."""
     return tools.status(Roster.from_env())

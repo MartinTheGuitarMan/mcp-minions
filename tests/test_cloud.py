@@ -187,3 +187,37 @@ def test_status_shows_the_quota_the_provider_reported(fake):
     assert q["as_reported_by_provider"] == {"x-ratelimit-limit-req-minute": "188",
                                             "x-ratelimit-remaining-req-minute": "187"}
     assert "secret-test-key" not in json.dumps(tools.status(r))
+
+
+# ---------- ask: open questions only for models that passed the hippo test ----------
+def ask_reply(text):
+    return json.dumps({"answer": text, "confidence": "low"})
+
+
+def test_ask_needs_a_knowledge_model(fake):
+    r = roster({"l": local(fake, "l")})
+    assert "ask" not in r.routes
+    with pytest.raises(Exception, match="MINION_BAD_INPUT"):
+        tools.ask(r, "What is a VA panel?")
+    with pytest.raises(BadConfig):                      # an untrusted model cannot be named for ask
+        roster({"l": local(fake, "l")}, {"ask": {"fast": ["l"]}})
+
+
+def test_ask_only_uses_knowledge_models_and_keeps_the_privacy_gate(fake):
+    r = roster({"l": local(fake, "l"), "c": cloud(fake, "c", knowledge=True)})
+    assert r.route("ask").fast[0].name == "c"          # the model without knowledge: true is never picked
+    with pytest.raises(PrivacyRefused):
+        tools.ask(r, "Which OSS note app should I use?")
+    fake.by_model["c"] = [ask_reply("I cannot confirm that paper exists.")]
+    out = tools.ask(r, "Summarize the 2019 paper on the spotted mountain hippo", sensitive=False)
+    assert out["confidence"] == "low" and "cannot confirm" in out["answer"]
+    sent = json.dumps(fake.calls("c")[0])
+    assert "Never invent names" in sent and "<data>" in sent
+
+
+def test_caps_can_include_ask_but_ask_still_needs_knowledge(fake):
+    every = ["ask", "classify", "extract", "summarize"]
+    r = roster({"c": cloud(fake, "c", caps=every, knowledge=True)})
+    assert r.route("ask").fast[0].name == "c"
+    untrusted = roster({"c": cloud(fake, "c", caps=every)})
+    assert "ask" not in untrusted.routes and not untrusted.models["c"].serves("ask")

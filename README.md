@@ -102,6 +102,10 @@ A roster can include hosted models next to local ones, for **public text** only.
 - **`minion_status`** lists models, whether each is cloud, its capabilities, whether its key is set (never the key), requests this server sent in the last minute, and the provider's own `x-ratelimit-*` headers from its latest reply, exactly as sent (Groq and Mistral send them; they are not interpreted, so the names and units differ per provider). Quota shows only after the minion has been called in the same server process.
 - **Free tiers are not private.** Providers may use prompts for training, and limits change often, so keep them in the roster and check the provider's console.
 
+### Open questions: `ask` and the hippo test
+
+`ask(question, sensitive=true)` returns `{answer, confidence}` for a general question. Small models invent facts when a question has a false premise, so only models marked `"knowledge": true` in the roster may serve it, and you should set that flag only after the model passes a false-premise test (for example: "summarize the 2019 paper that first described a species that does not exist" must get "I cannot confirm that", not an invented paper). Without such a model the tool answers `MINION_BAD_INPUT`. The privacy gate applies as for every tool: a cloud model gets the question only with `sensitive=false`. Do not use `ask` for anything that must be exactly right.
+
 ## Security note
 
 The `*_file` tools read **any UTF-8 text file** the caller names (up to the size cap). Whoever can call this server can therefore read files your user account can read. Only connect clients you trust, and leave the file tools out of any setup where that is a problem.

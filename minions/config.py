@@ -13,6 +13,7 @@ DEFAULT_URLS = {"lmstudio": "http://127.0.0.1:1234/v1", "ollama": "http://127.0.
 BACKENDS = (*DEFAULT_URLS, "openai-compat")   # openai-compat: any OpenAI-style endpoint, base_url required
 CONSTRAIN = ("json_schema", "json_object", "none")
 TOOLS = ("classify", "extract", "summarize")
+ASK = "ask"   # open questions: only models marked "knowledge" (they passed the hippo test) may serve it
 KINDS = ("fast", "reasoning")
 DEFAULT_TIMEOUT = {"fast": 120.0, "reasoning": 600.0}
 
@@ -34,8 +35,11 @@ class Config:
     caps: tuple | None = None    # tools this model may serve; None = all
     rpm: int | None = None       # requests per minute, counted locally
     constrain: str = "json_schema"   # how the schema is requested: json_schema | json_object | none
+    knowledge: bool = False      # trusted with open questions: set only after it passed the false-premise (hippo) test
 
     def serves(self, tool: str) -> bool:
+        if tool == ASK and not self.knowledge:
+            return False
         return self.caps is None or tool in self.caps
 
     @classmethod
@@ -128,8 +132,8 @@ class Roster:
                 # the privacy gate trusts this flag, so a public host must not slip through as local
                 raise BadConfig(f"model {name!r}: {base_url} is not a local address; set \"cloud\": true")
             caps = m.get("caps")
-            if caps is not None and (not isinstance(caps, list) or not set(caps) <= set(TOOLS)):
-                raise BadConfig(f"model {name!r}: caps must be a list drawn from {list(TOOLS)}")
+            if caps is not None and (not isinstance(caps, list) or not set(caps) <= {*TOOLS, ASK}):
+                raise BadConfig(f"model {name!r}: caps must be a list drawn from {[*TOOLS, ASK]}")
             limits = m.get("limits") or {}
             rpm = limits.get("rpm")
             if rpm is not None and (not isinstance(rpm, int) or rpm < 1):
@@ -143,7 +147,7 @@ class Roster:
                 max_file_bytes=max_file_bytes, ollama_native=bool(m.get("ollama_native", False)),
                 kind=kind, name=name, max_tokens=m.get("max_tokens"),
                 cloud=cloud, key_env=key_env, caps=tuple(caps) if caps is not None else None, rpm=rpm,
-                constrain=constrain,
+                constrain=constrain, knowledge=bool(m.get("knowledge", False)),
             )
 
         def ref(name, role, tool):
@@ -152,7 +156,8 @@ class Roster:
             return models[name]
 
         routes: dict[str, Route] = {}
-        for tool in TOOLS:
+        has_ask = ASK in raw.get("routes", {}) or any(c.knowledge for c in models.values())
+        for tool in TOOLS + ((ASK,) if has_ask else ()):
             r = raw.get("routes", {}).get(tool, {})
             fast_names = r.get("fast")
             if fast_names is None:   # route by capability, not by model name
@@ -168,6 +173,8 @@ class Roster:
                 raise BadConfig(f"route {tool!r}: a model in \"fast\" does not list {tool!r} in its caps")
             if len(fast) > 1 and tool != "classify":
                 raise BadConfig(f"route {tool!r}: only classify supports more than one fast model")
+            if tool == ASK and r.get("judge"):
+                raise BadConfig('route "ask": a judge does not apply')
             judge = ref(r["judge"], "judge", tool) if r.get("judge") else None
             if judge is not None and judge.kind != "reasoning":
                 raise BadConfig(f"route {tool!r}: judge must have kind reasoning")

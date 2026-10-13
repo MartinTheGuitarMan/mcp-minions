@@ -6,7 +6,7 @@ from pathlib import Path
 import jsonschema
 
 from . import ratelimit, router
-from .config import Roster
+from .config import ASK, Roster
 from .errors import BadInput
 
 
@@ -69,6 +69,25 @@ def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> d
               "required": ["summary"], "additionalProperties": False}
     task = f"Summarize the data in at most {max_words} words."
     return _go(cfg, "summarize", lambda order=None: (task, schema), text, "summary", None, sensitive)
+
+
+ASK_SCHEMA = {"type": "object",
+              "properties": {"answer": {"type": "string"}, "confidence": {"type": "string", "enum": ["high", "medium", "low"]}},
+              "required": ["answer", "confidence"], "additionalProperties": False}
+ASK_TASK = ("Answer the question in the data. Use only what you actually know. If the question rests on something you "
+            "cannot confirm (a paper, species, person, product or fact), say you cannot confirm it instead of answering "
+            "as if it were real. Never invent names, citations, numbers or dates. Keep the answer short. "
+            "Set confidence to low when you are unsure.")
+
+
+def ask(cfg, question: str, sensitive: bool = True) -> dict:
+    """Open question for a model that passed the false-premise test. Not for anything that must be exactly right."""
+    _check_text(question)
+    roster = Roster.coerce(cfg)
+    if ASK not in roster.routes:
+        raise BadInput('no model is trusted with open questions: mark a roster model "knowledge": true '
+                       "after it passes the hippo test")
+    return _go(roster, ASK, lambda order=None: (ASK_TASK, ASK_SCHEMA), question, "answer", None, sensitive)
 
 
 def status(cfg) -> dict:
