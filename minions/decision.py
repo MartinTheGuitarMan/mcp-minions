@@ -7,10 +7,12 @@ from .config import Config
 from .errors import SchemaError
 
 
-def run(cfg: Config, task: str, text: str, labels: list) -> tuple[str, float | None]:
-    """One pick-one question. Returns (label, confidence in 0..1 or None). The label is checked in code."""
+def ask_choice(cfg: Config, text: str, instructions: str, criteria: dict) -> tuple[str, float | None, dict]:
+    """One pick-one question about a text. Returns (choice, confidence or None, probabilities).
+    The choice is checked in code against the criteria keys."""
+    labels = list(criteria)
     body = {"model": cfg.model, "state": text,
-            "questions": {"label": {"type": "choice", "instructions": task, "criteria": {l: l for l in labels}}}}
+            "questions": {"label": {"type": "choice", "instructions": instructions, "criteria": criteria}}}
     raw = backends._post(cfg, f"{cfg.base_url}/systemone", body)
     u = raw.get("usage") if isinstance(raw, dict) else None
     if isinstance(u, dict):
@@ -23,4 +25,11 @@ def run(cfg: Config, task: str, text: str, labels: list) -> tuple[str, float | N
     if label not in labels:
         raise SchemaError(f"{cfg.name}: decision model chose {label!r}, not one of the labels", str(label))
     conf = ans.get("confidence")
-    return label, float(conf) if isinstance(conf, (int, float)) and 0 <= conf <= 1 else None
+    probs = ans.get("probabilities") if isinstance(ans.get("probabilities"), dict) else {}
+    return label, float(conf) if isinstance(conf, (int, float)) and 0 <= conf <= 1 else None, probs
+
+
+def run(cfg: Config, task: str, text: str, labels: list) -> tuple[str, float | None]:
+    """Classify: one pick-one question over the labels. Returns (label, confidence in 0..1 or None)."""
+    label, conf, _ = ask_choice(cfg, text, task, {l: l for l in labels})
+    return label, conf

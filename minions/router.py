@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
-from . import decision, engine, judge as judge_mod
+from . import decision, defend, engine, judge as judge_mod
 from .config import Roster
 from .errors import NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
@@ -54,6 +54,10 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     meta = {"tool": tool, "fast": [m.name for m, _ in runs], "judge": None, "votes": {}, "schema_failures": [],
             "debias": len(route.fast) == 1 and len(runs) == 2, "rate_limited": [], "failover": []}
 
+    if route.shortcut:   # screen the text first: instruction-like segments are dropped before anything classifies it
+        text, removed = defend.strip(route.shortcut[0], text)
+        if removed:
+            meta["injection_removed"] = removed
     if route.shortcut:   # a confident decision model answers alone; otherwise the usual voters and judge follow
         sm, threshold = route.shortcut
         try:

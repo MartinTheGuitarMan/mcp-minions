@@ -9,6 +9,7 @@ class FakeBackend:
     def __init__(self):
         self.requests, self.replies, self.by_model, self.headers = [], [], {}, []
         self.extra_headers = {}
+        self.dynamic = None   # optional fn(body) -> reply content, to answer by request content
         self.delay, self.inflight, self.max_inflight, self._lock = 0.0, 0, 0, threading.Lock()
         outer = self
 
@@ -27,7 +28,7 @@ class FakeBackend:
                 outer.requests.append((self.path, body))
                 outer.headers.append(dict(self.headers))
                 q = outer.by_model.get(body.get("model"))
-                content = q.pop(0) if q else (outer.replies.pop(0) if outer.replies else "{}")
+                content = outer.dynamic(body) if outer.dynamic else (q.pop(0) if q else (outer.replies.pop(0) if outer.replies else "{}"))
                 if isinstance(content, dict):
                     status, payload = 200, {"choices": [{"message": {"content": content["content"]},
                                                          "finish_reason": content["finish_reason"]}]}
