@@ -64,6 +64,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
             label, conf = decision.run(sm, task, text, labels)
             meta["shortcut"] = {"model": sm.name, "confidence": conf, "escalated": conf is None or conf < threshold}
             if not meta["shortcut"]["escalated"]:
+                meta["fast"] = []   # nobody else was called
                 return {"label": label}, meta
         except RateLimited:
             meta["rate_limited"].append(sm.name)

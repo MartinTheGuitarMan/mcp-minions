@@ -361,6 +361,7 @@ def test_call_log_records_calls_without_the_text(fake, tmp_path, monkeypatch):
     rep = tools.report()
     assert rep["calls"] == 2 and rep["errors"] == {"MINION_PRIVACY": 1} and rep["shortcut"] == {"answered": 1}
     assert rep["sensitive_share"] == 0.5
+    assert rep["answered_by"] == {"d": 1}      # the shortcut model answered alone; the voters were never called
 
 
 def test_call_log_is_off_unless_configured(fake, monkeypatch):

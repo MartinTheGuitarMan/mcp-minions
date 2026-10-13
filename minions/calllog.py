@@ -25,6 +25,7 @@ def record(tool: str, sensitive: bool, started: float, text: str, meta: dict | N
            "latency_s": round(time.time() - started, 2), "error": error,
            "fast": meta.get("fast"), "judge": meta.get("judge"),
            "shortcut": (None if not short else ("answered" if not short.get("escalated") else "escalated")),
+           "shortcut_model": short.get("model"),
            "failover": meta.get("failover") or None, "rate_limited": meta.get("rate_limited") or None,
            "injection_removed": len(meta.get("injection_removed") or []) or None}
     try:
@@ -62,4 +63,5 @@ def report(days: float = 7.0) -> dict:
             "failovers": sum(1 for r in rows if r.get("failover")),
             "rate_limited": sum(1 for r in rows if r.get("rate_limited")),
             "injection_segments_removed": sum(r.get("injection_removed") or 0 for r in rows),
-            "answered_by": dict(Counter(m for r in rows for m in (r.get("fast") or [])))}
+            "answered_by": dict(Counter([m for r in rows for m in (r.get("fast") or [])] +
+                                         [r["shortcut_model"] for r in rows if r.get("shortcut") == "answered" and r.get("shortcut_model")]))}
