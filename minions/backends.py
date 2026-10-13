@@ -9,7 +9,7 @@ import httpx
 
 from . import ratelimit
 from .config import Config
-from .errors import BackendError, BadConfig, MinionDown, RateLimited
+from .errors import BackendError, BadConfig, MinionDown, RateLimited, SchemaError
 
 RETRIES_ON_429 = 2
 MAX_WAIT = 10.0   # longer waits are not worth blocking a tool call for: report RateLimited and let the route fail over
@@ -60,6 +60,9 @@ def _post_once(cfg: Config, url: str, payload: dict, headers: dict) -> httpx.Res
 
 def _post(cfg: Config, url: str, payload: dict) -> dict:
     r = _send(cfg, url, payload)
+    if r.status_code == 400 and ("does not match the expected schema" in r.text or "json_validate_failed" in r.text):
+        # the provider checked the model's JSON against our schema and rejected it: a schema failure, not an outage
+        raise SchemaError(f"{cfg.name}: provider rejected the model output as not matching the schema: {r.text[:200]}")
     if r.status_code >= 400:
         raise BackendError(f"{cfg.backend} HTTP {r.status_code}: {r.text[:300]}")
     try:

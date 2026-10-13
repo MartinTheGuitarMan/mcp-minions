@@ -221,3 +221,12 @@ def test_caps_can_include_ask_but_ask_still_needs_knowledge(fake):
     assert r.route("ask").fast[0].name == "c"
     untrusted = roster({"c": cloud(fake, "c", caps=every)})
     assert "ask" not in untrusted.routes and not untrusted.models["c"].serves("ask")
+
+
+def test_provider_side_schema_rejection_is_a_schema_failure_not_an_outage(fake):
+    from minions.errors import SchemaError
+    r = roster({"c": cloud(fake, "c")})
+    fake.by_model["c"] = [(400, {"error": {"message": "Generated JSON does not match the expected schema.",
+                                           "code": "json_validate_failed"}})]
+    with pytest.raises(SchemaError):
+        tools.classify(r, "x", LABELS, sensitive=False)
