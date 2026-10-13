@@ -102,6 +102,9 @@ def complete_ex(cfg: Config, messages: list, schema: dict | None = None, name: s
     if max_tokens:
         payload["max_tokens"] = max_tokens
     body = _post(cfg, f"{cfg.base_url}/chat/completions", payload)
+    u = body.get("usage") if isinstance(body, dict) else None
+    if isinstance(u, dict):
+        ratelimit.add_usage(cfg, u.get("prompt_tokens"), u.get("completion_tokens"))
     try:
         ch = body["choices"][0]
         return ch["message"]["content"] or "", ch.get("finish_reason") or "stop"

@@ -2,7 +2,7 @@
 probability instead of generating text. Used for classify only, as a voter or as a confident first line."""
 from __future__ import annotations
 
-from . import backends
+from . import backends, ratelimit
 from .config import Config
 from .errors import SchemaError
 
@@ -12,6 +12,9 @@ def run(cfg: Config, task: str, text: str, labels: list) -> tuple[str, float | N
     body = {"model": cfg.model, "state": text,
             "questions": {"label": {"type": "choice", "instructions": task, "criteria": {l: l for l in labels}}}}
     raw = backends._post(cfg, f"{cfg.base_url}/systemone", body)
+    u = raw.get("usage") if isinstance(raw, dict) else None
+    if isinstance(u, dict):
+        ratelimit.add_usage(cfg, u.get("input_tokens"), u.get("output_tokens"))
     try:
         ans = raw["answers"]["label"]
         label = ans["choice"]

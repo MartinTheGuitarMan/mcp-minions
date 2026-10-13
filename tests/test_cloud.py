@@ -293,3 +293,12 @@ def test_shortcut_that_is_rate_limited_falls_through_to_the_voters(fake):
     r = shortcut_roster(fake)
     fake.by_model.update(d=[(429, {})] * 3, l=[L("negative")])
     assert tools.classify(r, "x", LABELS, sensitive=False)["label"] == "negative"
+
+
+def test_status_counts_tokens_the_provider_reports(fake):
+    r = roster({"l": local(fake, "l"), "d": decision(fake)}, {"classify": {"fast": ["d"]}})
+    fake.by_model["d"] = [jev("positive"), jev("negative")]
+    tools.classify(r, "a", LABELS, sensitive=False)
+    tools.classify(r, "b", LABELS, sensitive=False)
+    row = next(m for m in tools.status(r)["models"] if m["name"] == "d")
+    assert row["tokens_used_by_this_server"] == {"tokens_in": 18, "tokens_out": 2, "calls": 2}

@@ -101,6 +101,9 @@ def status(cfg) -> dict:
             row["key_set"] = bool(os.environ.get(m.key_env, "").strip())
         if m.rpm is not None:
             row["rpm"] = {"limit": m.rpm, "used_last_minute": ratelimit.used(m)}
+        spent = ratelimit.usage(m)
+        if spent:
+            row["tokens_used_by_this_server"] = spent
         quota = ratelimit.provider_quota(m)
         if quota:
             row["provider_quota"] = quota

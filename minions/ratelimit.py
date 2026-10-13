@@ -12,6 +12,7 @@ from .errors import RateLimited
 WINDOW = 60.0
 _hits: dict[str, deque] = defaultdict(deque)
 _lock = threading.Lock()
+_usage: dict[str, list] = {}   # tokens in, tokens out, calls, per minion, since this server process started
 _quota: dict[str, tuple[float, dict]] = {}   # latest x-ratelimit-* headers a provider sent, per minion
 
 
@@ -55,6 +56,22 @@ def record(cfg: Config, headers) -> None:
             _quota[_key(cfg)] = (time.monotonic(), seen)
 
 
+def add_usage(cfg: Config, tokens_in, tokens_out) -> None:
+    """Count the tokens a provider says a reply used (OpenAI-style or System One usage objects)."""
+    if isinstance(tokens_in, int) and isinstance(tokens_out, int):
+        with _lock:
+            u = _usage.setdefault(_key(cfg), [0, 0, 0])
+            u[0] += tokens_in
+            u[1] += tokens_out
+            u[2] += 1
+
+
+def usage(cfg: Config) -> dict | None:
+    with _lock:
+        u = _usage.get(_key(cfg))
+    return {"tokens_in": u[0], "tokens_out": u[1], "calls": u[2]} if u else None
+
+
 def provider_quota(cfg: Config) -> dict | None:
     with _lock:
         got = _quota.get(_key(cfg))
@@ -67,3 +84,4 @@ def reset() -> None:
     with _lock:
         _hits.clear()
         _quota.clear()
+        _usage.clear()
