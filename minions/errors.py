@@ -35,3 +35,16 @@ class BadInput(MinionError):
 
 class BadConfig(MinionError):
     code = "MINION_BAD_CONFIG"
+
+
+class PrivacyRefused(MinionError):
+    code = "MINION_PRIVACY"
+
+
+class RateLimited(MinionError):
+    """A provider rate limit (HTTP 429, or our own per-minute cap). The one failure a route may fail over on."""
+    code = "MINION_RATE_LIMITED"
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after

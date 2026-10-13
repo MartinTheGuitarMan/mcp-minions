@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .errors import BadConfig
 
 DEFAULT_URLS = {"lmstudio": "http://127.0.0.1:1234/v1", "ollama": "http://127.0.0.1:11434/v1"}
+BACKENDS = (*DEFAULT_URLS, "openai-compat")   # openai-compat: any OpenAI-style endpoint, base_url required
+CONSTRAIN = ("json_schema", "json_object", "none")
 TOOLS = ("classify", "extract", "summarize")
 KINDS = ("fast", "reasoning")
 DEFAULT_TIMEOUT = {"fast": 120.0, "reasoning": 600.0}
@@ -25,6 +29,14 @@ class Config:
     kind: str = "fast"           # fast = constrained decoding; reasoning = free thinking, we validate
     name: str = "default"
     max_tokens: int | None = None
+    cloud: bool = False          # data leaves this machine: never gets a call marked sensitive
+    key_env: str | None = None   # name of the env var holding the API key (the key itself is never stored)
+    caps: tuple | None = None    # tools this model may serve; None = all
+    rpm: int | None = None       # requests per minute, counted locally
+    constrain: str = "json_schema"   # how the schema is requested: json_schema | json_object | none
+
+    def serves(self, tool: str) -> bool:
+        return self.caps is None or tool in self.caps
 
     @classmethod
     def from_env(cls, env=os.environ) -> "Config":
@@ -50,6 +62,17 @@ class Route:
     judge: Config | None
     quorum: int
     debias: bool = False   # classify with ONE fast model: ask twice with the label order reversed
+    fallback: tuple = ()   # fast models tried in order when a fast model is rate limited (and only then)
+
+
+def _is_local_host(url: str) -> bool:
+    """Loopback, private address, `.local` name or a bare hostname: a machine you own, not a public service."""
+    host = urlparse(url).hostname or ""
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_loopback or ip.is_private
+    except ValueError:
+        return host == "localhost" or host.endswith((".local", ".localhost")) or "." not in host
 
 
 @dataclass(frozen=True)
@@ -89,17 +112,38 @@ class Roster:
         models: dict[str, Config] = {}
         for name, m in raw["models"].items():
             backend, kind = m.get("backend"), m.get("kind", "fast")
-            if backend not in DEFAULT_URLS:
-                raise BadConfig(f"model {name!r}: backend must be one of {sorted(DEFAULT_URLS)}")
+            if backend not in BACKENDS:
+                raise BadConfig(f"model {name!r}: backend must be one of {sorted(BACKENDS)}")
             if kind not in KINDS:
                 raise BadConfig(f"model {name!r}: kind must be one of {KINDS}")
             if not m.get("model"):
                 raise BadConfig(f"model {name!r}: missing \"model\"")
+            base_url = m.get("base_url") or DEFAULT_URLS.get(backend)
+            if not base_url:
+                raise BadConfig(f"model {name!r}: backend {backend!r} needs a \"base_url\"")
+            cloud, key_env = bool(m.get("cloud", False)), m.get("key_env")
+            if cloud and not key_env:
+                raise BadConfig(f"model {name!r}: a cloud model needs \"key_env\" (the env var holding its API key)")
+            if not cloud and not _is_local_host(base_url):
+                # the privacy gate trusts this flag, so a public host must not slip through as local
+                raise BadConfig(f"model {name!r}: {base_url} is not a local address; set \"cloud\": true")
+            caps = m.get("caps")
+            if caps is not None and (not isinstance(caps, list) or not set(caps) <= set(TOOLS)):
+                raise BadConfig(f"model {name!r}: caps must be a list drawn from {list(TOOLS)}")
+            limits = m.get("limits") or {}
+            rpm = limits.get("rpm")
+            if rpm is not None and (not isinstance(rpm, int) or rpm < 1):
+                raise BadConfig(f"model {name!r}: limits.rpm must be a positive integer")
+            constrain = m.get("constrain", "json_schema")
+            if constrain not in CONSTRAIN:
+                raise BadConfig(f"model {name!r}: constrain must be one of {CONSTRAIN}")
             models[name] = Config(
-                backend=backend, base_url=m.get("base_url", DEFAULT_URLS[backend]).rstrip("/"),
+                backend=backend, base_url=base_url.rstrip("/"),
                 model=m["model"], timeout=float(m.get("timeout", DEFAULT_TIMEOUT[kind])),
                 max_file_bytes=max_file_bytes, ollama_native=bool(m.get("ollama_native", False)),
                 kind=kind, name=name, max_tokens=m.get("max_tokens"),
+                cloud=cloud, key_env=key_env, caps=tuple(caps) if caps is not None else None, rpm=rpm,
+                constrain=constrain,
             )
 
         def ref(name, role, tool):
@@ -111,8 +155,8 @@ class Roster:
         for tool in TOOLS:
             r = raw.get("routes", {}).get(tool, {})
             fast_names = r.get("fast")
-            if fast_names is None:
-                fast_names = [n for n, c in models.items() if c.kind == "fast"][:1]
+            if fast_names is None:   # route by capability, not by model name
+                fast_names = [n for n, c in models.items() if c.kind == "fast" and c.serves(tool)][:1]
             if isinstance(fast_names, str):
                 fast_names = [fast_names]
             if not fast_names:
@@ -120,16 +164,23 @@ class Roster:
             fast = tuple(ref(n, "fast", tool) for n in fast_names)
             if any(c.kind != "fast" for c in fast):
                 raise BadConfig(f"route {tool!r}: entries in \"fast\" must have kind fast")
+            if any(not c.serves(tool) for c in fast):
+                raise BadConfig(f"route {tool!r}: a model in \"fast\" does not list {tool!r} in its caps")
             if len(fast) > 1 and tool != "classify":
                 raise BadConfig(f"route {tool!r}: only classify supports more than one fast model")
             judge = ref(r["judge"], "judge", tool) if r.get("judge") else None
             if judge is not None and judge.kind != "reasoning":
                 raise BadConfig(f"route {tool!r}: judge must have kind reasoning")
+            if judge is not None and not judge.serves(tool):
+                raise BadConfig(f"route {tool!r}: the judge does not list {tool!r} in its caps")
+            fallback = tuple(ref(n, "fallback", tool) for n in r.get("fallback", []))
+            if any(c.kind != "fast" or not c.serves(tool) for c in fallback):
+                raise BadConfig(f"route {tool!r}: \"fallback\" entries must be fast models that serve {tool!r}")
             quorum = int(r.get("quorum", len(fast) // 2 + 1))
             if not 1 <= quorum <= len(fast):
                 raise BadConfig(f"route {tool!r}: quorum must be between 1 and {len(fast)}")
             debias = r.get("debias")
             if debias is None:   # auto: worth the extra call only when a judge can resolve a mismatch
                 debias = tool == "classify" and len(fast) == 1 and judge is not None
-            routes[tool] = Route(fast, judge, quorum, bool(debias) and tool == "classify" and len(fast) == 1)
+            routes[tool] = Route(fast, judge, quorum, bool(debias) and tool == "classify" and len(fast) == 1, fallback)
         return cls(models, routes, max_file_bytes, meta)

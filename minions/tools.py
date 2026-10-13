@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import jsonschema
 
-from . import router
+from . import ratelimit, router
 from .config import Roster
 from .errors import BadInput
 
@@ -22,9 +23,9 @@ def read_text_file(cfg, path: str) -> str:
         raise BadInput(f"file is not valid UTF-8: {path}") from e
 
 
-def _go(cfg, tool, build, text, name, labels=None) -> dict:
+def _go(cfg, tool, build, text, name, labels=None, sensitive=True) -> dict:
     roster = Roster.coerce(cfg)
-    out, meta = router.run(roster, tool, build, text, name, labels)
+    out, meta = router.run(roster, tool, build, text, name, labels, sensitive)
     return {**out, "_minion": meta} if roster.meta else out
 
 
@@ -33,7 +34,7 @@ def _check_text(text: str) -> None:
         raise BadInput("text must be a non-empty string")
 
 
-def classify(cfg, text: str, labels: list[str], hint: str = "") -> dict:
+def classify(cfg, text: str, labels: list[str], hint: str = "", sensitive: bool = True) -> dict:
     _check_text(text)
     if not labels or len(set(labels)) != len(labels) or not all(isinstance(l, str) and l for l in labels):
         raise BadInput("labels must be a non-empty list of unique non-empty strings")
@@ -45,10 +46,10 @@ def classify(cfg, text: str, labels: list[str], hint: str = "") -> dict:
                   "required": ["label"], "additionalProperties": False}
         return f"Classify the data into exactly one of: {', '.join(order)}." + (f" {hint}" if hint else ""), schema
 
-    return _go(cfg, "classify", build, text, "classification", list(labels))
+    return _go(cfg, "classify", build, text, "classification", list(labels), sensitive)
 
 
-def extract(cfg, text: str, schema: dict, hint: str = "") -> dict:
+def extract(cfg, text: str, schema: dict, hint: str = "", sensitive: bool = True) -> dict:
     _check_text(text)
     if not isinstance(schema, dict) or schema.get("type") != "object":
         raise BadInput('schema must be a JSON Schema object with "type": "object"')
@@ -57,14 +58,29 @@ def extract(cfg, text: str, schema: dict, hint: str = "") -> dict:
     except jsonschema.SchemaError as e:
         raise BadInput(f"invalid JSON Schema: {e.message}") from e
     task = "Extract the requested fields from the data. Use only what the data states." + (f" {hint}" if hint else "")
-    return _go(cfg, "extract", lambda order=None: (task, schema), text, "extraction")
+    return _go(cfg, "extract", lambda order=None: (task, schema), text, "extraction", None, sensitive)
 
 
-def summarize(cfg, text: str, max_words: int = 100) -> dict:
+def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> dict:
     _check_text(text)
     if not 5 <= max_words <= 1000:
         raise BadInput("max_words must be between 5 and 1000")
     schema = {"type": "object", "properties": {"summary": {"type": "string"}},
               "required": ["summary"], "additionalProperties": False}
     task = f"Summarize the data in at most {max_words} words."
-    return _go(cfg, "summarize", lambda order=None: (task, schema), text, "summary")
+    return _go(cfg, "summarize", lambda order=None: (task, schema), text, "summary", None, sensitive)
+
+
+def status(cfg) -> dict:
+    """What the roster holds and how much of each minion's local request budget is used. Never shows keys."""
+    roster = Roster.coerce(cfg)
+    rows = []
+    for name, m in roster.models.items():
+        row = {"name": name, "model": m.model, "kind": m.kind, "cloud": m.cloud,
+               "caps": list(m.caps) if m.caps is not None else "all"}
+        if m.key_env:
+            row["key_set"] = bool(os.environ.get(m.key_env, "").strip())
+        if m.rpm is not None:
+            row["rpm"] = {"limit": m.rpm, "used_last_minute": ratelimit.used(m)}
+        rows.append(row)
+    return {"models": rows, "note": "usage is counted by this server only; provider quotas are not queried"}

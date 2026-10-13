@@ -1,0 +1,20 @@
+{
+  "models": {
+    "local-fast": {"backend": "ollama", "model": "<local model id>", "kind": "fast"},
+    "local-judge": {"backend": "ollama", "model": "<local reasoning model id>", "kind": "reasoning"},
+    "cloud-example": {
+      "backend": "openai-compat",
+      "base_url": "https://api.example.com/v1",
+      "model": "<model id>",
+      "cloud": true,
+      "key_env": "EXAMPLE_API_KEY",
+      "caps": ["summarize", "classify"],
+      "limits": {"rpm": 30},
+      "constrain": "json_object"
+    }
+  },
+  "routes": {
+    "summarize": {"fast": ["local-fast"], "fallback": ["cloud-example"]},
+    "classify": {"fast": ["local-fast"], "judge": "local-judge"}
+  }
+}

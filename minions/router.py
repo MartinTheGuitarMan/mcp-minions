@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
 from . import engine, judge as judge_mod
 from .config import Roster
-from .errors import NoQuorum, SchemaError
+from .errors import NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
 
 def _rotate(labels: list, i: int) -> list:
@@ -15,9 +16,26 @@ def _rotate(labels: list, i: int) -> list:
     return labels[k:] + labels[:k]
 
 
-def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | None = None) -> tuple[dict, dict]:
-    """build(order) -> (task, schema); order is a label ordering (classify only) or None."""
-    route = roster.route(tool)
+def _gate(route, tool: str, sensitive: bool):
+    """Privacy gate. A sensitive call never reaches a cloud model: those are removed from the route, and a
+    route left with no local fast model is refused, not quietly answered somewhere else."""
+    if not sensitive:
+        return route
+    fast = tuple(m for m in route.fast if not m.cloud)
+    if not fast:
+        raise PrivacyRefused(f"{tool}: every fast model on this route is cloud and the call is sensitive; "
+                             f"pass sensitive=false only for public text")
+    judge = route.judge if route.judge is not None and not route.judge.cloud else None
+    return replace(route, fast=fast, judge=judge, quorum=min(route.quorum, len(fast)),
+                   debias=route.debias and len(fast) == 1 and (judge is not None or route.judge is None),
+                   fallback=tuple(m for m in route.fallback if not m.cloud))
+
+
+def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | None = None,
+        sensitive: bool = True) -> tuple[dict, dict]:
+    """build(order) -> (task, schema); order is a label ordering (classify only) or None.
+    sensitive=True (the default) keeps the call on local models."""
+    route = _gate(roster.route(tool), tool, sensitive)
     task, schema = build(None)
 
     # Each run is (model, label order). Small models are position-biased, so label order is varied:
@@ -33,14 +51,27 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     else:
         runs, quorum = [(route.fast[0], None)], 1
     meta = {"tool": tool, "fast": [m.name for m, _ in runs], "judge": None, "votes": {}, "schema_failures": [],
-            "debias": len(route.fast) == 1 and len(runs) == 2}
+            "debias": len(route.fast) == 1 and len(runs) == 2, "rate_limited": [], "failover": []}
 
     def one(m, order):
         t, sch = build(order)
-        try:
-            return m, engine.run(m, t, text, sch, name), None
-        except SchemaError as e:
-            return m, None, e
+        # Rate limits are the one failure a route may fail over on; every other hard failure propagates.
+        # A fallback never duplicates a model that already votes in this route.
+        tried = [m] + [f for f in route.fallback if f is not m and f not in route.fast]
+        limited = None
+        for cand in tried:
+            try:
+                out = engine.run(cand, t, text, sch, name), None
+            except SchemaError as e:
+                out = None, e
+            except RateLimited as e:
+                meta["rate_limited"].append(cand.name)
+                limited = limited or e
+                continue
+            if cand is not m:
+                meta["failover"].append([m.name, cand.name])
+            return (cand, *out)
+        return m, None, limited
 
     # Models on the same server run one after another (LM Studio swaps models in and out on demand, so
     # concurrent requests to two different models on one server evict each other mid-request). Different
@@ -60,7 +91,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     outs = [o for _, o in sorted(done, key=lambda t: t[0])]
     valid = [(m, r) for m, r, e in outs if r is not None]
     failures = [(m, e) for m, r, e in outs if e is not None]
-    meta["schema_failures"] = [m.name for m, _ in failures]
+    meta["schema_failures"] = [m.name for m, e in failures if isinstance(e, SchemaError)]
 
     if tool == "classify":
         votes = Counter(r["label"] for _, r in valid)
@@ -70,7 +101,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
             return {"label": ranked[0][0]}, meta
         if route.judge is None:
             if not votes:
-                raise failures[0][1]   # every fast model failed schema: report that, not a quorum miss
+                raise failures[0][1]   # every fast model failed (schema or rate limit): report that, not a quorum miss
             raise NoQuorum(f"no judge configured and fast models did not reach quorum {quorum}: "
                            f"votes={dict(votes)} schema_failures={meta['schema_failures']}")
         out, _ = judge_mod.verify_classification(route.judge, task, text, labels, dict(votes))
@@ -81,7 +112,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     if valid:
         return valid[0][1], meta
     first = failures[0][1]
-    if route.judge is None:
+    if isinstance(first, RateLimited) or route.judge is None:   # the judge repairs bad output, not a missing answer
         raise first
     meta["judge"] = route.judge.name
     return judge_mod.repair(route.judge, task, text, schema, first.raw, str(first)), meta

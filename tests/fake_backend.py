@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class FakeBackend:
     def __init__(self):
-        self.requests, self.replies, self.by_model = [], [], {}
+        self.requests, self.replies, self.by_model, self.headers = [], [], {}, []
         self.delay, self.inflight, self.max_inflight, self._lock = 0.0, 0, 0, threading.Lock()
         outer = self
 
@@ -24,6 +24,7 @@ class FakeBackend:
                 with outer._lock:
                     outer.inflight -= 1
                 outer.requests.append((self.path, body))
+                outer.headers.append(dict(self.headers))
                 q = outer.by_model.get(body.get("model"))
                 content = q.pop(0) if q else (outer.replies.pop(0) if outer.replies else "{}")
                 if isinstance(content, dict):

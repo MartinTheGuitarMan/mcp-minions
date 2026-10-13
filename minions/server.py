@@ -26,23 +26,25 @@ def guarded(fn):
 
 @mcp.tool()
 @guarded
-def classify(text: str, labels: list[str], hint: str = "") -> dict:
-    """Classify text into exactly one of the given labels using a local model."""
-    return tools.classify(Roster.from_env(), text, labels, hint)
+def classify(text: str, labels: list[str], hint: str = "", sensitive: bool = True) -> dict:
+    """Classify text into exactly one of the given labels. Local models only, unless sensitive=false
+    (public text), which also allows cloud minions."""
+    return tools.classify(Roster.from_env(), text, labels, hint, sensitive)
 
 
 @mcp.tool()
 @guarded
-def extract(text: str, schema: dict, hint: str = "") -> dict:
-    """Extract fields from text into an object matching a JSON Schema (type: object)."""
-    return tools.extract(Roster.from_env(), text, schema, hint)
+def extract(text: str, schema: dict, hint: str = "", sensitive: bool = True) -> dict:
+    """Extract fields from text into an object matching a JSON Schema (type: object). sensitive=false
+    (public text only) allows cloud minions."""
+    return tools.extract(Roster.from_env(), text, schema, hint, sensitive)
 
 
 @mcp.tool()
 @guarded
-def summarize(text: str, max_words: int = 100) -> dict:
-    """Summarize text in at most max_words words."""
-    return tools.summarize(Roster.from_env(), text, max_words)
+def summarize(text: str, max_words: int = 100, sensitive: bool = True) -> dict:
+    """Summarize text in at most max_words words. sensitive=false (public text only) allows cloud minions."""
+    return tools.summarize(Roster.from_env(), text, max_words, sensitive)
 
 
 @mcp.tool()
@@ -67,6 +69,13 @@ def summarize_file(path: str, max_words: int = 100) -> dict:
     """Like summarize, reading UTF-8 text from a local file (size-capped)."""
     cfg = Roster.from_env()
     return tools.summarize(cfg, tools.read_text_file(cfg, path), max_words)
+
+
+@mcp.tool()
+@guarded
+def minion_status() -> dict:
+    """List the configured minions: local or cloud, capabilities, whether a key is set, requests used this minute."""
+    return tools.status(Roster.from_env())
 
 
 def main() -> None:
