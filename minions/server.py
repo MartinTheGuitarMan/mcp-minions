@@ -87,6 +87,13 @@ def minion_status() -> dict:
     return tools.status(Roster.from_env())
 
 
+@mcp.tool()
+@guarded
+def minion_report(days: float = 7.0) -> dict:
+    """Usage summary from the call log: calls per tool, latency, shortcut answers, judge calls, failovers, errors."""
+    return tools.report(days)
+
+
 def main() -> None:
     mcp.run()
 

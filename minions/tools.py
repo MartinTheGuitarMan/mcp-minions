@@ -5,9 +5,11 @@ from pathlib import Path
 
 import jsonschema
 
-from . import ratelimit, router
+import time
+
+from . import calllog, ratelimit, router
 from .config import ASK, Roster
-from .errors import BadInput
+from .errors import BadInput, MinionError
 
 
 def read_text_file(cfg, path: str) -> str:
@@ -25,7 +27,13 @@ def read_text_file(cfg, path: str) -> str:
 
 def _go(cfg, tool, build, text, name, labels=None, sensitive=True) -> dict:
     roster = Roster.coerce(cfg)
-    out, meta = router.run(roster, tool, build, text, name, labels, sensitive)
+    started = time.time()
+    try:
+        out, meta = router.run(roster, tool, build, text, name, labels, sensitive)
+    except MinionError as e:
+        calllog.record(tool, sensitive, started, text, None, e.code)
+        raise
+    calllog.record(tool, sensitive, started, text, meta, None)
     return {**out, "_minion": meta} if roster.meta else out
 
 
@@ -88,6 +96,11 @@ def ask(cfg, question: str, sensitive: bool = True) -> dict:
         raise BadInput('no model is trusted with open questions: mark a roster model "knowledge": true '
                        "after it passes the hippo test")
     return _go(roster, ASK, lambda order=None: (ASK_TASK, ASK_SCHEMA), question, "answer", None, sensitive)
+
+
+def report(days: float = 7.0) -> dict:
+    """Usage summary from the call log (MINION_LOG): no texts or answers are ever stored."""
+    return calllog.report(days)
 
 
 def status(cfg) -> dict:
