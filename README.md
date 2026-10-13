@@ -85,7 +85,7 @@ Set `MINION_ROSTER` to inline JSON or a path to a JSON file to use several model
 
 ## Cloud minions (v0.3)
 
-A roster can include hosted models next to local ones, for **public text** only. The default is the safe one: every call is `sensitive=true`, so cloud models are never used unless the caller passes `sensitive=false`. See `roster.cloud.example.json`.
+A roster can include hosted models next to local ones, for **public text** only. The default is the safe one: every call is `sensitive=true`, so cloud models are never used unless the caller passes `sensitive=false`. See `examples/roster.cloud.example.json`. The repo ships no real roster and no keys: your own roster and `*.env` key files live outside the repo.
 
 ```json
 "groq": {"backend": "openai-compat", "base_url": "https://api.groq.com/openai/v1", "model": "<model id>",
@@ -105,6 +105,16 @@ A roster can include hosted models next to local ones, for **public text** only.
 ### Open questions: `ask` and the hippo test
 
 `ask(question, sensitive=true)` returns `{answer, confidence}` for a general question. Small models invent facts when a question has a false premise, so only models marked `"knowledge": true` in the roster may serve it, and you should set that flag only after the model passes a false-premise test (for example: "summarize the 2019 paper that first described a species that does not exist" must get "I cannot confirm that", not an invented paper). Without such a model the tool answers `MINION_BAD_INPUT`. The privacy gate applies as for every tool: a cloud model gets the question only with `sensitive=false`. Do not use `ask` for anything that must be exactly right.
+
+## Evaluating minions
+
+`evals/dataset.json` holds invented public test items with known answers (sentiment, topic and prompt-injection classification, field extraction, summaries checked for invented numbers, and general questions with and without a false premise). `scripts/eval.py` runs each roster model alone, and optionally the whole classify route as a quorum, then prints a table of correct answers, schema failures, rate limits and median latency. Rate limits are waited out and counted, never scored as wrong answers.
+
+```bash
+MINION_ROSTER=my-roster.json uv run python scripts/eval.py --quorum --out results.json
+```
+
+Scoring is deliberately simple (exact label, field containment, a refusal pattern for false-premise questions), so read the raw outputs saved with `--out` before you trust a single miss. Use a small `--max-calls name=N` for models on free tiers with daily caps.
 
 ## Security note
 
