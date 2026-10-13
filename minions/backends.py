@@ -37,6 +37,7 @@ def _send(cfg: Config, url: str, payload: dict) -> httpx.Response:
     for attempt in range(RETRIES_ON_429 + 1):
         ratelimit.acquire(cfg)
         r = _post_once(cfg, url, payload, headers)
+        ratelimit.record(cfg, r.headers)
         if r.status_code != 429:
             return r
         wait = _retry_after(r, attempt)

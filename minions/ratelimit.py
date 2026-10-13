@@ -12,6 +12,7 @@ from .errors import RateLimited
 WINDOW = 60.0
 _hits: dict[str, deque] = defaultdict(deque)
 _lock = threading.Lock()
+_quota: dict[str, tuple[float, dict]] = {}   # latest x-ratelimit-* headers a provider sent, per minion
 
 
 def _key(cfg: Config) -> str:
@@ -45,6 +46,24 @@ def used(cfg: Config) -> int:
         return len(q)
 
 
+def record(cfg: Config, headers) -> None:
+    """Keep the provider's own rate-limit headers (Groq, Mistral and others send x-ratelimit-*), verbatim:
+    providers name and scale them differently, so they are reported as sent and never interpreted."""
+    seen = {k.lower(): v for k, v in headers.items() if k.lower().startswith("x-ratelimit-")}
+    if seen:
+        with _lock:
+            _quota[_key(cfg)] = (time.monotonic(), seen)
+
+
+def provider_quota(cfg: Config) -> dict | None:
+    with _lock:
+        got = _quota.get(_key(cfg))
+    if got is None:
+        return None
+    return {"as_reported_by_provider": got[1], "age_seconds": round(time.monotonic() - got[0])}
+
+
 def reset() -> None:
     with _lock:
         _hits.clear()
+        _quota.clear()

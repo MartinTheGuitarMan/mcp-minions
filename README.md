@@ -99,7 +99,7 @@ A roster can include hosted models next to local ones, for **public text** only.
 - **Rate limits.** `limits.rpm` is counted by this server per minute; at the cap the call is refused without being sent. A provider 429 is retried twice with backoff (honouring `Retry-After` up to 10 s), then reported as `MINION_RATE_LIMITED`. Provider quotas are not queried.
 - **Failover is for rate limits only.** A route may set `"fallback": ["other-fast-model"]`, tried in order on `MINION_RATE_LIMITED` and on nothing else: `MINION_DOWN`, backend errors and schema failures still propagate. Sensitive calls never fail over to a cloud model. Fallbacks that already vote in a quorum are skipped.
 - **`constrain`** sets how the schema is requested from a provider: `json_schema` (default), `json_object` (provider only offers JSON mode) or `none`. Replies are validated against the schema either way.
-- **`minion_status`** lists models, whether each is cloud, its capabilities, whether its key is set (never the key), and requests used in the last minute.
+- **`minion_status`** lists models, whether each is cloud, its capabilities, whether its key is set (never the key), requests this server sent in the last minute, and the provider's own `x-ratelimit-*` headers from its latest reply, exactly as sent (Groq and Mistral send them; they are not interpreted, so the names and units differ per provider). Quota shows only after the minion has been called in the same server process.
 - **Free tiers are not private.** Providers may use prompts for training, and limits change often, so keep them in the roster and check the provider's console.
 
 ## Security note

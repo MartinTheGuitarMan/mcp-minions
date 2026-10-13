@@ -82,5 +82,9 @@ def status(cfg) -> dict:
             row["key_set"] = bool(os.environ.get(m.key_env, "").strip())
         if m.rpm is not None:
             row["rpm"] = {"limit": m.rpm, "used_last_minute": ratelimit.used(m)}
+        quota = ratelimit.provider_quota(m)
+        if quota:
+            row["provider_quota"] = quota
         rows.append(row)
-    return {"models": rows, "note": "usage is counted by this server only; provider quotas are not queried"}
+    return {"models": rows, "note": "used_last_minute is counted by this server; provider_quota is what the "
+            "provider reported with its latest reply (absent until the minion has been called in this server process)"}

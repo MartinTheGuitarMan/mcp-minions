@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 class FakeBackend:
     def __init__(self):
         self.requests, self.replies, self.by_model, self.headers = [], [], {}, []
+        self.extra_headers = {}
         self.delay, self.inflight, self.max_inflight, self._lock = 0.0, 0, 0, threading.Lock()
         outer = self
 
@@ -37,6 +38,8 @@ class FakeBackend:
                 data = json.dumps(payload).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                for k, v in outer.extra_headers.items():
+                    self.send_header(k, v)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)

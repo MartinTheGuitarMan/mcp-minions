@@ -175,3 +175,15 @@ def test_status_reports_but_never_shows_the_key(fake):
     assert "secret-test-key" not in json.dumps(st)
     c = next(m for m in st["models"] if m["name"] == "c")
     assert c["cloud"] and c["key_set"] and c["rpm"] == {"limit": 5, "used_last_minute": 0} and c["caps"] == ["summarize"]
+
+
+def test_status_shows_the_quota_the_provider_reported(fake):
+    r = roster({"c": cloud(fake, "c")})
+    assert "provider_quota" not in tools.status(r)["models"][0]    # nothing known before the first call
+    fake.extra_headers = {"x-ratelimit-limit-req-minute": "188", "X-RateLimit-Remaining-Req-Minute": "187", "x-other": "no"}
+    fake.by_model["c"] = [L("positive")]
+    tools.classify(r, "x", LABELS, sensitive=False)
+    q = tools.status(r)["models"][0]["provider_quota"]
+    assert q["as_reported_by_provider"] == {"x-ratelimit-limit-req-minute": "188",
+                                            "x-ratelimit-remaining-req-minute": "187"}
+    assert "secret-test-key" not in json.dumps(tools.status(r))
