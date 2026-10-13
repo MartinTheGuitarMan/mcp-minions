@@ -106,6 +106,15 @@ A roster can include hosted models next to local ones, for **public text** only.
 
 `ask(question, sensitive=true)` returns `{answer, confidence}` for a general question. Small models invent facts when a question has a false premise, so only models marked `"knowledge": true` in the roster may serve it, and you should set that flag only after the model passes a false-premise test (for example: "summarize the 2019 paper that first described a species that does not exist" must get "I cannot confirm that", not an invented paper). Without such a model the tool answers `MINION_BAD_INPUT`. The privacy gate applies as for every tool: a cloud model gets the question only with `sensitive=false`. Do not use `ask` for anything that must be exactly right.
 
+## Decision models (System One)
+
+A System One model answers a typed question about a text with a probability instead of generating text. A roster entry like TypeSafe's Jev (`"backend": "systemone", "kind": "decision"`, optionally `"cloud": true` with `key_env`) can serve `classify` only. It works in two ways:
+
+- **As a voter:** list it in a classify route's `fast` models; its label is one vote.
+- **As a confident first line:** `"shortcut": {"model": "<name>", "min_confidence": 0.9}` on the classify route. If the decision model's confidence reaches the threshold, its label is returned alone and nothing else is called. Below it (or when it is rate limited or fails the schema check), the normal voters and judge run. With `MINION_META=1` the result shows whether the shortcut escalated.
+
+A cloud decision model is never used for sensitive calls, as for every cloud model. Confidence values are model-specific, so tune `min_confidence` on your own labelled data (see the eval harness) rather than copying a number. Request shape (a `choice` question with `criteria` over the labels) follows the public Jev examples; the label is checked in code like every other model's output.
+
 ## Evaluating minions
 
 `evals/dataset.json` holds invented public test items with known answers (sentiment, topic and prompt-injection classification, field extraction, summaries checked for invented numbers, and general questions with and without a false premise). `scripts/eval.py` runs each roster model alone, and optionally the whole classify route as a quorum, then prints a table of correct answers, schema failures, rate limits and median latency. Rate limits are waited out and counted, never scored as wrong answers.

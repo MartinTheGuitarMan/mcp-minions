@@ -10,12 +10,13 @@ from urllib.parse import urlparse
 from .errors import BadConfig
 
 DEFAULT_URLS = {"lmstudio": "http://127.0.0.1:1234/v1", "ollama": "http://127.0.0.1:11434/v1"}
-BACKENDS = (*DEFAULT_URLS, "openai-compat")   # openai-compat: any OpenAI-style endpoint, base_url required
+BACKENDS = (*DEFAULT_URLS, "openai-compat", "systemone")   # openai-compat: any OpenAI-style endpoint, base_url required
 CONSTRAIN = ("json_schema", "json_object", "none")
 TOOLS = ("classify", "extract", "summarize")
 ASK = "ask"   # open questions: only models marked "knowledge" (they passed the hippo test) may serve it
-KINDS = ("fast", "reasoning")
-DEFAULT_TIMEOUT = {"fast": 120.0, "reasoning": 600.0}
+KINDS = ("fast", "reasoning", "decision")   # decision: System One model, classify only
+DEFAULT_TIMEOUT = {"fast": 120.0, "reasoning": 600.0, "decision": 60.0}
+SYSTEMONE_URL = "https://api.typesafe.ai/v1"
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,8 @@ class Config:
 
     def serves(self, tool: str) -> bool:
         if tool == ASK and not self.knowledge:
+            return False
+        if self.kind == "decision" and tool != "classify":
             return False
         return self.caps is None or tool in self.caps
 
@@ -67,6 +70,7 @@ class Route:
     quorum: int
     debias: bool = False   # classify with ONE fast model: ask twice with the label order reversed
     fallback: tuple = ()   # fast models tried in order when a fast model is rate limited (and only then)
+    shortcut: tuple = ()   # (decision Config, min_confidence): a confident answer ends a classify call early
 
 
 def _is_local_host(url: str) -> bool:
@@ -122,7 +126,9 @@ class Roster:
                 raise BadConfig(f"model {name!r}: kind must be one of {KINDS}")
             if not m.get("model"):
                 raise BadConfig(f"model {name!r}: missing \"model\"")
-            base_url = m.get("base_url") or DEFAULT_URLS.get(backend)
+            if (backend == "systemone") != (kind == "decision"):
+                raise BadConfig(f"model {name!r}: backend \"systemone\" and kind \"decision\" go together")
+            base_url = m.get("base_url") or DEFAULT_URLS.get(backend) or (SYSTEMONE_URL if backend == "systemone" else None)
             if not base_url:
                 raise BadConfig(f"model {name!r}: backend {backend!r} needs a \"base_url\"")
             cloud, key_env = bool(m.get("cloud", False)), m.get("key_env")
@@ -167,8 +173,8 @@ class Roster:
             if not fast_names:
                 raise BadConfig(f"route {tool!r}: no fast model available")
             fast = tuple(ref(n, "fast", tool) for n in fast_names)
-            if any(c.kind != "fast" for c in fast):
-                raise BadConfig(f"route {tool!r}: entries in \"fast\" must have kind fast")
+            if any(c.kind not in ("fast", "decision") for c in fast):
+                raise BadConfig(f"route {tool!r}: entries in \"fast\" must have kind fast or decision")
             if any(not c.serves(tool) for c in fast):
                 raise BadConfig(f"route {tool!r}: a model in \"fast\" does not list {tool!r} in its caps")
             if len(fast) > 1 and tool != "classify":
@@ -183,11 +189,19 @@ class Roster:
             fallback = tuple(ref(n, "fallback", tool) for n in r.get("fallback", []))
             if any(c.kind != "fast" or not c.serves(tool) for c in fallback):
                 raise BadConfig(f"route {tool!r}: \"fallback\" entries must be fast models that serve {tool!r}")
+            shortcut = ()
+            if r.get("shortcut"):
+                sc = r["shortcut"]
+                sm = ref(sc.get("model"), "shortcut", tool)
+                conf = sc.get("min_confidence")
+                if tool != "classify" or sm.kind != "decision" or not isinstance(conf, (int, float)) or not 0 < conf <= 1:
+                    raise BadConfig(f"route {tool!r}: shortcut needs a decision model and min_confidence in (0, 1], classify only")
+                shortcut = (sm, float(conf))
             quorum = int(r.get("quorum", len(fast) // 2 + 1))
             if not 1 <= quorum <= len(fast):
                 raise BadConfig(f"route {tool!r}: quorum must be between 1 and {len(fast)}")
             debias = r.get("debias")
             if debias is None:   # auto: worth the extra call only when a judge can resolve a mismatch
                 debias = tool == "classify" and len(fast) == 1 and judge is not None
-            routes[tool] = Route(fast, judge, quorum, bool(debias) and tool == "classify" and len(fast) == 1, fallback)
+            routes[tool] = Route(fast, judge, quorum, bool(debias) and tool == "classify" and len(fast) == 1, fallback, shortcut)
         return cls(models, routes, max_file_bytes, meta)

@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
-from . import engine, judge as judge_mod
+from . import decision, engine, judge as judge_mod
 from .config import Roster
 from .errors import NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
@@ -26,7 +26,8 @@ def _gate(route, tool: str, sensitive: bool):
         raise PrivacyRefused(f"{tool}: every fast model on this route is cloud and the call is sensitive; "
                              f"pass sensitive=false only for public text")
     judge = route.judge if route.judge is not None and not route.judge.cloud else None
-    return replace(route, fast=fast, judge=judge, quorum=min(route.quorum, len(fast)),
+    shortcut = route.shortcut if route.shortcut and not route.shortcut[0].cloud else ()
+    return replace(route, fast=fast, judge=judge, quorum=min(route.quorum, len(fast)), shortcut=shortcut,
                    debias=route.debias and len(fast) == 1 and (judge is not None or route.judge is None),
                    fallback=tuple(m for m in route.fallback if not m.cloud))
 
@@ -53,6 +54,18 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     meta = {"tool": tool, "fast": [m.name for m, _ in runs], "judge": None, "votes": {}, "schema_failures": [],
             "debias": len(route.fast) == 1 and len(runs) == 2, "rate_limited": [], "failover": []}
 
+    if route.shortcut:   # a confident decision model answers alone; otherwise the usual voters and judge follow
+        sm, threshold = route.shortcut
+        try:
+            label, conf = decision.run(sm, task, text, labels)
+            meta["shortcut"] = {"model": sm.name, "confidence": conf, "escalated": conf is None or conf < threshold}
+            if not meta["shortcut"]["escalated"]:
+                return {"label": label}, meta
+        except RateLimited:
+            meta["rate_limited"].append(sm.name)
+        except SchemaError:
+            meta["schema_failures"].append(sm.name)
+
     def one(m, order):
         t, sch = build(order)
         # Rate limits are the one failure a route may fail over on; every other hard failure propagates.
@@ -61,7 +74,10 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
         limited = None
         for cand in tried:
             try:
-                out = engine.run(cand, t, text, sch, name), None
+                if cand.kind == "decision":
+                    out = {"label": decision.run(cand, t, text, order)[0]}, None
+                else:
+                    out = engine.run(cand, t, text, sch, name), None
             except SchemaError as e:
                 out = None, e
             except RateLimited as e:
@@ -91,7 +107,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     outs = [o for _, o in sorted(done, key=lambda t: t[0])]
     valid = [(m, r) for m, r, e in outs if r is not None]
     failures = [(m, e) for m, r, e in outs if e is not None]
-    meta["schema_failures"] = [m.name for m, e in failures if isinstance(e, SchemaError)]
+    meta["schema_failures"] += [m.name for m, e in failures if isinstance(e, SchemaError)]
 
     if tool == "classify":
         votes = Counter(r["label"] for _, r in valid)

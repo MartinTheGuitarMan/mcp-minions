@@ -20,6 +20,7 @@ from minions import tools  # noqa: E402
 from minions.config import ASK, TOOLS, Roster, Route  # noqa: E402
 from minions.errors import MinionError, RateLimited, SchemaError  # noqa: E402
 
+SENS = False   # set by --sensitive: calls then go through the privacy gate and only local models answer
 DATA = json.loads((Path(__file__).resolve().parent.parent / "evals" / "dataset.json").read_text())
 REFUSAL = re.compile(r"cannot confirm|can't confirm|not aware|no (such|record|evidence|record of)|does not exist|doesn't exist|"
                      r"unable to (find|verify|confirm)|couldn't find|could not find|not (a )?(real|recognized|known)|"
@@ -48,7 +49,7 @@ def items(model: Roster, name: str, quorum_only: bool = False):
     if m.serves("classify") or quorum_only:
         for i, c in enumerate(DATA["classify"]):
             def f(c=c):
-                out = tools.classify(model, c["text"], c["labels"], sensitive=False)
+                out = tools.classify(model, c["text"], c["labels"], sensitive=SENS)
                 return out["label"] == c["expected"], out["label"]
             yield f"classify/{c['tag']}", f"c{i}", f
     if quorum_only:
@@ -56,7 +57,7 @@ def items(model: Roster, name: str, quorum_only: bool = False):
     if m.serves("extract"):
         for i, e in enumerate(DATA["extract"]):
             def f(e=e):
-                out = tools.extract(model, e["text"], e["schema"], sensitive=False)
+                out = tools.extract(model, e["text"], e["schema"], sensitive=SENS)
                 ok = all(norm(out.get(k)) == norm(v) if not isinstance(v, float) else abs(float(out.get(k, 1e9)) - v) < 1e-6
                          for k, v in e["expected"].items())
                 return ok, out
@@ -64,7 +65,7 @@ def items(model: Roster, name: str, quorum_only: bool = False):
     if m.serves("summarize"):
         for i, s in enumerate(DATA["summarize"]):
             def f(s=s):
-                out = tools.summarize(model, s["text"], s["max_words"], sensitive=False)["summary"]
+                out = tools.summarize(model, s["text"], s["max_words"], sensitive=SENS)["summary"]
                 invented = numbers(out) - numbers(s["text"])
                 ok = (not invented and all(w in out.lower() for w in s["must"]) and len(out.split()) <= s["max_words"] * 1.3)
                 return ok, out
@@ -72,7 +73,7 @@ def items(model: Roster, name: str, quorum_only: bool = False):
     if m.serves(ASK):
         for i, a in enumerate(DATA["ask"]):
             def f(a=a):
-                out = tools.ask(model, a["q"], sensitive=False)
+                out = tools.ask(model, a["q"], sensitive=SENS)
                 said_no = bool(REFUSAL.search(out["answer"]))
                 ok = said_no if a["kind"] == "false" else (not said_no or all(w in out["answer"].lower() for w in a["must"])) and all(w in out["answer"].lower() for w in a["must"])
                 return ok, out["answer"]
@@ -123,8 +124,11 @@ def main():
     ap.add_argument("--models"), ap.add_argument("--max-calls", action="append", default=[])
     ap.add_argument("--quorum", action="store_true"), ap.add_argument("--only-quorum", action="store_true")
     ap.add_argument("--only", help="run only items whose task name contains this text, e.g. hard")
+    ap.add_argument("--sensitive", action="store_true", help="mark every call sensitive (local models only)")
     ap.add_argument("--out")
     a = ap.parse_args()
+    global SENS
+    SENS = a.sensitive
     roster = Roster.from_env()
     names = a.models.split(",") if a.models else list(roster.models)
     caps = {k: int(v) for k, v in (x.split("=") for x in a.max_calls)}

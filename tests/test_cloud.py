@@ -230,3 +230,66 @@ def test_provider_side_schema_rejection_is_a_schema_failure_not_an_outage(fake):
                                            "code": "json_validate_failed"}})]
     with pytest.raises(SchemaError):
         tools.classify(r, "x", LABELS, sensitive=False)
+
+
+# ---------- System One decision models ----------
+def jev(label, conf=0.95):
+    return (200, {"model": "jev-1.13.0", "answers": {"label": {"type": "choice", "choice": label,
+            "probabilities": {label: conf}, "confidence": conf}}, "usage": {"input_tokens": 9, "output_tokens": 1}})
+
+
+def decision(fake, name="d", **kw):
+    return {"backend": "systemone", "base_url": fake.url, "model": name, "kind": "decision", "cloud": True,
+            "key_env": KEY, "timeout": 5, **kw}
+
+
+def test_decision_model_needs_the_systemone_backend_and_only_serves_classify(fake):
+    with pytest.raises(BadConfig):
+        roster({"d": {**decision(fake), "backend": "lmstudio"}})
+    r = roster({"l": local(fake, "l"), "d": decision(fake)}, {"classify": {"fast": ["d"]}})
+    assert not r.models["d"].serves("extract")
+    with pytest.raises(BadConfig):
+        roster({"l": local(fake, "l"), "d": decision(fake)}, {"extract": {"fast": ["d"]}})
+
+
+def test_decision_voter_sends_state_and_criteria_and_checks_the_label(fake):
+    r = roster({"l": local(fake, "l"), "d": decision(fake)}, {"classify": {"fast": ["d"]}})
+    fake.by_model["d"] = [jev("positive")]
+    assert tools.classify(r, "nice", LABELS, sensitive=False) == {"label": "positive"}
+    path, body = fake.requests[0]
+    assert path.endswith("/systemone") and body["state"] == "nice"
+    assert body["questions"]["label"]["criteria"] == {"positive": "positive", "negative": "negative"}
+    assert fake.headers[0]["Authorization"] == "Bearer secret-test-key"
+    from minions.errors import SchemaError
+    fake.by_model["d"] = [jev("sports")]
+    with pytest.raises(SchemaError):
+        tools.classify(r, "nice", LABELS, sensitive=False)
+
+
+def shortcut_roster(fake, threshold=0.9):
+    return Roster.from_dict({"models": {"l": local(fake, "l"), "d": decision(fake)},
+        "routes": {"classify": {"fast": ["l"], "shortcut": {"model": "d", "min_confidence": threshold}}}}, meta=True)
+
+
+def test_confident_shortcut_answers_alone_and_unsure_escalates(fake):
+    r = shortcut_roster(fake)
+    fake.by_model.update(d=[jev("negative", 0.97)])
+    out = tools.classify(r, "bad", LABELS, sensitive=False)
+    assert out["label"] == "negative" and out["_minion"]["shortcut"]["escalated"] is False
+    assert fake.calls("l") == []
+    fake.by_model.update(d=[jev("negative", 0.55)], l=[L("positive")])
+    out = tools.classify(r, "meh", LABELS, sensitive=False)
+    assert out["label"] == "positive" and out["_minion"]["shortcut"]["escalated"] is True
+
+
+def test_cloud_shortcut_is_skipped_for_sensitive_calls(fake):
+    r = shortcut_roster(fake)
+    fake.by_model.update(l=[L("positive")])
+    assert tools.classify(r, "private text", LABELS)["label"] == "positive"
+    assert fake.calls("d") == []
+
+
+def test_shortcut_that_is_rate_limited_falls_through_to_the_voters(fake):
+    r = shortcut_roster(fake)
+    fake.by_model.update(d=[(429, {})] * 3, l=[L("negative")])
+    assert tools.classify(r, "x", LABELS, sensitive=False)["label"] == "negative"
