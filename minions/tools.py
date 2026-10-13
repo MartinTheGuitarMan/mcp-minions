@@ -25,11 +25,11 @@ def read_text_file(cfg, path: str) -> str:
         raise BadInput(f"file is not valid UTF-8: {path}") from e
 
 
-def _go(cfg, tool, build, text, name, labels=None, sensitive=True) -> dict:
+def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=None) -> dict:
     roster = Roster.coerce(cfg)
     started = time.time()
     try:
-        out, meta = router.run(roster, tool, build, text, name, labels, sensitive)
+        out, meta = router.run(roster, tool, build, text, name, labels, sensitive, descriptions)
     except MinionError as e:
         calllog.record(tool, sensitive, started, text, None, e.code)
         raise
@@ -42,19 +42,25 @@ def _check_text(text: str) -> None:
         raise BadInput("text must be a non-empty string")
 
 
-def classify(cfg, text: str, labels: list[str], hint: str = "", sensitive: bool = True) -> dict:
+def classify(cfg, text: str, labels: list[str], hint: str = "", sensitive: bool = True,
+             descriptions: dict | None = None) -> dict:
     _check_text(text)
     if not labels or len(set(labels)) != len(labels) or not all(isinstance(l, str) and l for l in labels):
         raise BadInput("labels must be a non-empty list of unique non-empty strings")
     if len(labels) > 50:
         raise BadInput("at most 50 labels")
+    if descriptions is not None and (not isinstance(descriptions, dict) or not set(descriptions) <= set(labels)
+                                     or not all(isinstance(v, str) for v in descriptions.values())):
+        raise BadInput("descriptions must map labels from the label list to short strings")
+    meaning = ("\nLabel meanings:\n" + "\n".join(f"- {l}: {d}" for l, d in descriptions.items())) if descriptions else ""
+
     def build(order=None):
         order = list(order or labels)
         schema = {"type": "object", "properties": {"label": {"type": "string", "enum": order}},
                   "required": ["label"], "additionalProperties": False}
-        return f"Classify the data into exactly one of: {', '.join(order)}." + (f" {hint}" if hint else ""), schema
+        return f"Classify the data into exactly one of: {', '.join(order)}." + (f" {hint}" if hint else "") + meaning, schema
 
-    return _go(cfg, "classify", build, text, "classification", list(labels), sensitive)
+    return _go(cfg, "classify", build, text, "classification", list(labels), sensitive, descriptions)
 
 
 def extract(cfg, text: str, schema: dict, hint: str = "", sensitive: bool = True) -> dict:

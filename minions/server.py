@@ -26,10 +26,11 @@ def guarded(fn):
 
 @mcp.tool()
 @guarded
-def classify(text: str, labels: list[str], hint: str = "", sensitive: bool = True) -> dict:
+def classify(text: str, labels: list[str], hint: str = "", sensitive: bool = True,
+             descriptions: dict[str, str] | None = None) -> dict:
     """Classify text into exactly one of the given labels. Local models only, unless sensitive=false
-    (public text), which also allows cloud minions."""
-    return tools.classify(Roster.from_env(), text, labels, hint, sensitive)
+    (public text), which also allows cloud minions. descriptions (label -> one line) tells the models what each label means."""
+    return tools.classify(Roster.from_env(), text, labels, hint, sensitive, descriptions)
 
 
 @mcp.tool()

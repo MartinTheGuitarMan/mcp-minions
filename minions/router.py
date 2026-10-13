@@ -33,7 +33,7 @@ def _gate(route, tool: str, sensitive: bool):
 
 
 def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | None = None,
-        sensitive: bool = True) -> tuple[dict, dict]:
+        sensitive: bool = True, descriptions: dict | None = None) -> tuple[dict, dict]:
     """build(order) -> (task, schema); order is a label ordering (classify only) or None.
     sensitive=True (the default) keeps the call on local models."""
     route = _gate(roster.route(tool), tool, sensitive)
@@ -61,7 +61,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     if route.shortcut:   # a confident decision model answers alone; otherwise the usual voters and judge follow
         sm, threshold = route.shortcut
         try:
-            label, conf = decision.run(sm, task, text, labels)
+            label, conf = decision.run(sm, task, text, labels, descriptions)
             meta["shortcut"] = {"model": sm.name, "confidence": conf, "escalated": conf is None or conf < threshold}
             if not meta["shortcut"]["escalated"]:
                 meta["fast"] = []   # nobody else was called
@@ -80,7 +80,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
         for cand in tried:
             try:
                 if cand.kind == "decision":
-                    out = {"label": decision.run(cand, t, text, order)[0]}, None
+                    out = {"label": decision.run(cand, t, text, order, descriptions)[0]}, None
                 else:
                     out = engine.run(cand, t, text, sch, name), None
             except SchemaError as e:

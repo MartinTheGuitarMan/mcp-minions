@@ -369,3 +369,17 @@ def test_call_log_is_off_unless_configured(fake, monkeypatch):
     fake.by_model["l"] = [L("positive")]
     tools.classify(roster({"l": local(fake, "l")}), "x", LABELS)
     assert tools.report()["calls"] == 0
+
+
+def test_label_descriptions_reach_voters_and_decision_models(fake):
+    r = roster({"l": local(fake, "l")}, {"classify": {"fast": ["l"]}})
+    fake.by_model["l"] = [L("positive")]
+    desc = {"positive": "praise or satisfaction", "negative": "complaint"}
+    tools.classify(r, "x", LABELS, descriptions=desc)
+    assert "- positive: praise or satisfaction" in json.dumps(fake.calls("l")[0])
+    r2 = shortcut_roster(fake)
+    fake.by_model["d"] = [jev("positive", 0.99)]
+    tools.classify(r2, "x", LABELS, sensitive=False, descriptions=desc)
+    assert fake.calls("d")[-1]["questions"]["label"]["criteria"] == {"positive": "praise or satisfaction", "negative": "complaint"}
+    with pytest.raises(Exception, match="MINION_BAD_INPUT"):
+        tools.classify(r, "x", LABELS, descriptions={"nope": "x"})

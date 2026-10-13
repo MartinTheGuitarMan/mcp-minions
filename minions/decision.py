@@ -29,7 +29,9 @@ def ask_choice(cfg: Config, text: str, instructions: str, criteria: dict) -> tup
     return label, float(conf) if isinstance(conf, (int, float)) and 0 <= conf <= 1 else None, probs
 
 
-def run(cfg: Config, task: str, text: str, labels: list) -> tuple[str, float | None]:
-    """Classify: one pick-one question over the labels. Returns (label, confidence in 0..1 or None)."""
-    label, conf, _ = ask_choice(cfg, text, task, {l: l for l in labels})
+def run(cfg: Config, task: str, text: str, labels: list, descriptions: dict | None = None) -> tuple[str, float | None]:
+    """Classify: one pick-one question over the labels (with a one-line description each if given).
+    Returns (label, confidence in 0..1 or None)."""
+    criteria = {l: (descriptions or {}).get(l) or l for l in labels}
+    label, conf, _ = ask_choice(cfg, text, task, criteria)
     return label, conf
