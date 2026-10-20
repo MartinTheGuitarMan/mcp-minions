@@ -7,7 +7,7 @@ import time
 
 import httpx
 
-from . import ratelimit
+from . import ratelimit, tokens
 from .config import Config
 from .errors import BackendError, BadConfig, MinionDown, RateLimited, SchemaError
 
@@ -90,6 +90,7 @@ def complete_ex(cfg: Config, messages: list, schema: dict | None = None, name: s
         body = _post(cfg, f"{cfg.base_url.removesuffix('/v1')}/api/chat", payload)
         try:
             finish = "length" if body.get("done_reason") == "length" else "stop"
+            tokens.note(cfg, body.get("prompt_eval_count"), body.get("eval_count"))
             return body["message"]["content"] or "", finish
         except (KeyError, TypeError) as e:
             raise BackendError(f"unexpected ollama response shape: {str(body)[:200]}") from e
@@ -103,8 +104,10 @@ def complete_ex(cfg: Config, messages: list, schema: dict | None = None, name: s
         payload["max_tokens"] = max_tokens
     body = _post(cfg, f"{cfg.base_url}/chat/completions", payload)
     u = body.get("usage") if isinstance(body, dict) else None
-    if isinstance(u, dict):
+    u = u if isinstance(u, dict) else {}
+    if u:
         ratelimit.add_usage(cfg, u.get("prompt_tokens"), u.get("completion_tokens"))
+    tokens.note(cfg, u.get("prompt_tokens"), u.get("completion_tokens"))
     try:
         ch = body["choices"][0]
         return ch["message"]["content"] or "", ch.get("finish_reason") or "stop"

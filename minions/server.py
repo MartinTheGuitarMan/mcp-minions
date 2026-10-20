@@ -91,7 +91,8 @@ def minion_status() -> dict:
 @mcp.tool()
 @guarded
 def minion_report(days: float = 7.0) -> dict:
-    """Usage summary from the call log: calls per tool, latency, shortcut answers, judge calls, failovers, errors."""
+    """Usage summary from the call log: calls per tool, latency, shortcut answers, judge calls, failovers, errors, tokens handled locally or by cloud, and an
+    estimate (not a billing figure) of tokens kept off the calling model."""
     return tools.report(days)
 
 

@@ -2,6 +2,7 @@
 Hard failures (MINION_DOWN, backend errors) always propagate; the judge never papers over them."""
 from __future__ import annotations
 
+import contextvars
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -108,7 +109,9 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
         done = run_group(next(iter(groups.values())))
     else:
         with ThreadPoolExecutor(len(groups)) as ex:
-            done = [x for part in ex.map(run_group, groups.values()) for x in part]  # hard errors propagate
+            # each worker thread runs in a copy of this context so its token counts reach the call's tally
+            futures = [ex.submit(contextvars.copy_context().run, run_group, g) for g in groups.values()]
+            done = [x for f in futures for x in f.result()]  # hard errors propagate
     outs = [o for _, o in sorted(done, key=lambda t: t[0])]
     valid = [(m, r) for m, r, e in outs if r is not None]
     failures = [(m, e) for m, r, e in outs if e is not None]

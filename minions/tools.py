@@ -7,7 +7,7 @@ import jsonschema
 
 import time
 
-from . import calllog, ratelimit, router
+from . import calllog, ratelimit, router, tokens
 from .config import ASK, Roster
 from .errors import BadInput, MinionError
 
@@ -28,12 +28,15 @@ def read_text_file(cfg, path: str) -> str:
 def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=None) -> dict:
     roster = Roster.coerce(cfg)
     started = time.time()
+    tally = tokens.start()
     try:
         out, meta = router.run(roster, tool, build, text, name, labels, sensitive, descriptions)
     except MinionError as e:
-        calllog.record(tool, sensitive, started, text, None, e.code)
+        calllog.record(tool, sensitive, started, text, None, e.code, tally.summary())
         raise
-    calllog.record(tool, sensitive, started, text, meta, None)
+    finally:
+        tokens.stop()
+    calllog.record(tool, sensitive, started, text, meta, None, tally.summary())
     return {**out, "_minion": meta} if roster.meta else out
 
 
