@@ -94,3 +94,52 @@ def test_roster_without_a_model_for_the_new_tools_still_loads_and_says_so(fake):
     assert "tag" not in r.routes and "classify" in r.routes
     with pytest.raises(BadInput, match="no model in the roster serves 'tag'"):
         tools.tag(r, "x", ["a"], 1)
+
+
+# ---------- config file ----------
+def test_toml_and_json_config_give_the_same_roster_and_flags(tmp_path):
+    from minions.config import Roster
+    toml = tmp_path / "c.toml"
+    toml.write_text('[machine]\nlifecycle = true\nmin_free_pct = 50\nquiet_windows = ["23:00-06:00", "12:00-13:00"]\n'
+                    'allow_battery = false\n[models.a]\nbackend = "lmstudio"\nmodel = "m"\nmanage = true\nmem_gb = 2\n'
+                    '[routes.classify]\nfast = ["a"]\n')
+    env = {"MINION_CONFIG": str(toml), "MINION_MIN_FREE_PCT": "60"}
+    r = Roster.from_env(env)
+    assert r.models["a"].manage and r.route("classify").fast[0].name == "a"
+    assert env["MINION_LIFECYCLE"] == "1" and env["MINION_QUIET_WINDOWS"] == "23:00-06:00,12:00-13:00"
+    assert env["MINION_MIN_FREE_PCT"] == "60"            # the real environment wins over the file
+    assert "MINION_ALLOW_BATTERY" not in env             # false sets nothing
+    js = tmp_path / "c.json"
+    js.write_text(json.dumps({"models": {"a": {"backend": "lmstudio", "model": "m", "manage": True, "mem_gb": 2}},
+                              "routes": {"classify": {"fast": ["a"]}}}))
+    assert Roster.from_env({"MINION_CONFIG": str(js)}).models["a"] == r.models["a"]
+
+
+def test_config_file_errors_are_bad_config(tmp_path):
+    from minions.config import Roster
+    from minions.errors import BadConfig
+    cases = ['[machine]\nnope = 1\n', '[machine]\nmin_free_pct = "high"\n', '[machine]\nquiet_windows = "23:00-06:00"\n',
+             'not toml at all [[[']
+    for body in cases:
+        p = tmp_path / "bad.toml"
+        p.write_text(body)
+        with pytest.raises(BadConfig):
+            Roster.from_env({"MINION_CONFIG": str(p), "MINION_MODEL": "m"})
+    with pytest.raises(BadConfig):
+        Roster.from_env({"MINION_CONFIG": str(tmp_path / "missing.toml")})
+
+
+def test_config_with_only_machine_settings_uses_the_single_model_env(tmp_path):
+    from minions.config import Roster
+    p = tmp_path / "c.toml"
+    p.write_text("[machine]\nmeta = true\n")
+    env = {"MINION_CONFIG": str(p), "MINION_MODEL": "solo"}
+    assert Roster.from_env(env).models["default"].model == "solo" and env["MINION_META"] == "1"
+
+
+def test_example_toml_loads():
+    from pathlib import Path
+    from minions.config import Roster
+    ex = Path(__file__).resolve().parent.parent / "examples" / "minions.example.toml"
+    r = Roster.from_env({"MINION_CONFIG": str(ex)})
+    assert r.models["small"].ttl_s == 600 and r.route("classify").judge.name == "big"

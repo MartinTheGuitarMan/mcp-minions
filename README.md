@@ -61,6 +61,10 @@ Example MCP client entry (the exact file and format depend on your client):
 | `MINION_MAX_FILE_BYTES` | `1000000` | Size cap for the `*_file` tools |
 | `MINION_OLLAMA_NATIVE` | unset | Set to `1` to use Ollama's native `/api/chat` `format` instead of `response_format` |
 
+## Config file
+
+Instead of many `MINION_*` variables, point `MINION_CONFIG` at one TOML (or JSON) file with an optional `[machine]` table of flags and thresholds (`lifecycle`, `min_free_pct`, `large_gb`, `quiet_windows`, `allow_battery`, `model_dir`, `state_dir`, `log`, `meta`, ...), your `[models.*]` and `[routes.*]`. Real environment variables always win over the file, an unknown or mistyped setting is `MINION_BAD_CONFIG`, and keys never go in the file (cloud models name their key variable). With only a `[machine]` table the single-model setup from `MINION_MODEL` still applies. `MINION_ROSTER` keeps working. See [examples/minions.example.toml](examples/minions.example.toml); keep your own copy outside the repo.
+
 ## Roster, quorum and judge (v0.2)
 
 Set `MINION_ROSTER` to inline JSON or a path to a JSON file to use several models. Without it, the single-model setup above applies unchanged.

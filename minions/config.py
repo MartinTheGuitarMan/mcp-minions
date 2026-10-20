@@ -21,6 +21,71 @@ DEFAULT_TIMEOUT = {"fast": 120.0, "reasoning": 600.0, "decision": 60.0}
 SYSTEMONE_URL = "https://api.typesafe.ai/v1"
 
 
+# [machine] keys of a config file -> the environment variable each one sets (an existing variable always wins)
+MACHINE_KEYS = {
+    "lifecycle": ("MINION_LIFECYCLE", bool), "min_free_pct": ("MINION_MIN_FREE_PCT", int),
+    "large_gb": ("MINION_LARGE_GB", float), "total_gb": ("MINION_TOTAL_GB", float),
+    "hold_file": ("MINION_HOLD_FILE", str), "quiet_windows": ("MINION_QUIET_WINDOWS", list),
+    "allow_battery": ("MINION_ALLOW_BATTERY", bool), "model_dir": ("MINION_MODEL_DIR", str),
+    "state_dir": ("MINION_STATE_DIR", str), "log": ("MINION_LOG", str), "meta": ("MINION_META", bool),
+    "timeout": ("MINION_TIMEOUT", float), "max_file_bytes": ("MINION_MAX_FILE_BYTES", int),
+}
+
+
+def read_config_file(path: str) -> dict:
+    """A config file is TOML (.toml) or JSON (anything else): optional [machine] flags, [models.*], [routes.*]."""
+    p = Path(path).expanduser()
+    try:
+        if p.suffix == ".toml":
+            try:
+                import tomllib
+            except ModuleNotFoundError:   # Python 3.10
+                import tomli as tomllib
+            raw = tomllib.loads(p.read_text())
+        else:
+            raw = json.loads(p.read_text())
+    except (OSError, ValueError) as e:
+        raise BadConfig(f"cannot read MINION_CONFIG {path}: {e}") from e
+    if not isinstance(raw, dict):
+        raise BadConfig("MINION_CONFIG must hold a table/object at the top level")
+    return raw
+
+
+def apply_machine_settings(raw: dict, env) -> None:
+    """Turn the [machine] table into environment defaults. Real environment variables are never overridden."""
+    machine = raw.get("machine") or {}
+    if not isinstance(machine, dict):
+        raise BadConfig("[machine] must be a table")
+    for key, value in machine.items():
+        if key not in MACHINE_KEYS:
+            raise BadConfig(f"[machine]: unknown setting {key!r}; known: {sorted(MACHINE_KEYS)}")
+        var, kind = MACHINE_KEYS[key]
+        ok = (isinstance(value, bool) if kind is bool else
+              isinstance(value, list) and all(isinstance(x, str) for x in value) if kind is list else
+              isinstance(value, (int, float)) and not isinstance(value, bool) if kind in (int, float) else
+              isinstance(value, str))
+        if not ok:
+            raise BadConfig(f"[machine] {key} must be a {kind.__name__}")
+        if kind is bool:
+            text = "1" if value else ""
+        elif kind is list:
+            text = ",".join(value)
+        else:
+            text = str(value)
+        if text and var not in env:
+            env[var] = text
+
+
+def apply_config_file(env=os.environ) -> dict | None:
+    """If MINION_CONFIG is set: read it, apply its [machine] flags as defaults, return the raw table (else None)."""
+    path = env.get("MINION_CONFIG", "").strip()
+    if not path:
+        return None
+    raw = read_config_file(path)
+    apply_machine_settings(raw, env)
+    return raw
+
+
 @dataclass(frozen=True)
 class Config:
     """One model endpoint. Also usable on its own as a single-model setup (v0.1 behaviour)."""
@@ -109,6 +174,11 @@ class Roster:
 
     @classmethod
     def from_env(cls, env=os.environ) -> "Roster":
+        filed = apply_config_file(env)
+        if filed is not None and "models" in filed:
+            return cls.from_dict({k: v for k, v in filed.items() if k != "machine"},
+                                 max_file_bytes=int(env.get("MINION_MAX_FILE_BYTES", "1000000")),
+                                 meta=env.get("MINION_META", "") == "1")
         src = env.get("MINION_ROSTER", "").strip()
         if not src:
             return cls.single(Config.from_env(env))

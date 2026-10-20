@@ -191,6 +191,8 @@ def ask(cfg, question: str, sensitive: bool = True) -> dict:
 
 def report(days: float = 7.0) -> dict:
     """Usage summary from the call log (MINION_LOG): no texts or answers are ever stored."""
+    from .config import apply_config_file
+    apply_config_file()   # the log path may come from the config file
     return calllog.report(days)
 
 

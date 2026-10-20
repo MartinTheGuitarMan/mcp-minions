@@ -1,0 +1,32 @@
+# Example config for mcp-minions. Point MINION_CONFIG at your own copy (keep it outside the repo).
+# Real environment variables always win over this file. Keys are never stored here: cloud models name the
+# environment variable that holds the key (key_env).
+
+[machine]                         # flags and thresholds for this machine (all optional)
+lifecycle      = true             # minion_status shows resident/installed models and the load gate
+min_free_pct   = 45               # free memory needed before a managed model is loaded
+large_gb       = 6                # a model above this size counts as large: one at a time
+quiet_windows  = ["23:00-06:00"]  # never load inside these local-time windows
+allow_battery  = false            # false = refuse to load on battery
+model_dir      = "/path/to/models"   # volume whose free disk is shown
+log            = "/path/to/minions.log.jsonl"   # usage log, no texts
+
+[models.small]
+backend = "lmstudio"
+model   = "example/small-1b"
+kind    = "fast"
+manage  = true                    # minions may load and unload it
+mem_gb  = 1.2
+ttl_s   = 600                     # runtime unloads it after this many idle seconds
+
+[models.big]
+backend = "lmstudio"
+model   = "example/big-14b"
+kind    = "reasoning"
+manage  = true
+mem_gb  = 9
+context = 4096
+
+[routes.classify]
+fast  = ["small"]
+judge = "big"
