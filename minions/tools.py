@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import jsonschema
@@ -9,7 +10,7 @@ import time
 
 from . import calllog, lifecycle, manage, ratelimit, router, tokens
 from .config import ASK, Roster
-from .errors import BadInput, MinionError
+from .errors import BadInput, MinionError, SchemaError
 
 
 def read_text_file(cfg, path: str) -> str:
@@ -38,6 +39,13 @@ def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=
         tokens.stop()
     calllog.record(tool, sensitive, started, text, meta, None, tally.summary())
     return {**out, "_minion": meta} if roster.meta else out
+
+
+def _routed(cfg, tool: str):
+    roster = Roster.coerce(cfg)
+    if tool not in roster.routes:
+        raise BadInput(f'no model in the roster serves {tool!r}; add it to a model\'s "caps" or list a route')
+    return roster
 
 
 def _check_text(text: str) -> None:
@@ -86,6 +94,80 @@ def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> d
               "required": ["summary"], "additionalProperties": False}
     task = f"Summarize the data in at most {max_words} words."
     return _go(cfg, "summarize", lambda order=None: (task, schema), text, "summary", None, sensitive)
+
+
+def tag(cfg, text: str, labels: list[str], max_labels: int = 3, hint: str = "", sensitive: bool = True) -> dict:
+    """Zero or more of the given labels (at most max_labels). Like classify, but the text may fit several."""
+    _check_text(text)
+    if not labels or len(set(labels)) != len(labels) or not all(isinstance(l, str) and l for l in labels):
+        raise BadInput("labels must be a non-empty list of unique non-empty strings")
+    if len(labels) > 50:
+        raise BadInput("at most 50 labels")
+    if not isinstance(max_labels, int) or not 1 <= max_labels <= len(labels):
+        raise BadInput("max_labels must be an integer between 1 and the number of labels")
+    schema = {"type": "object", "properties": {"labels": {"type": "array", "items": {"type": "string", "enum": list(labels)},
+                                                          "uniqueItems": True, "maxItems": max_labels}},
+              "required": ["labels"], "additionalProperties": False}
+    task = (f"Pick every label that clearly applies to the data, at most {max_labels}, from: {', '.join(labels)}. "
+            "Pick none if none applies." + (f" {hint}" if hint else ""))
+    cfg = _routed(cfg, "tag")
+    return _go(cfg, "tag", lambda order=None: (task, schema), text, "tags", None, sensitive)
+
+
+SENSITIVE_KINDS = ["name", "email", "phone", "id", "address", "secret", "other"]
+# rules first: patterns that need no model. The model adds what patterns cannot see (names, addresses).
+SENSITIVE_RULES = (("email", re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")),
+                   ("secret", re.compile(r"\b(?:sk|pk|ghp|gho|xox[bap]|AKIA)[-_A-Za-z0-9]{12,}\b")),
+                   ("phone", re.compile(r"(?<!\d)\+?\d[\d ()-]{7,}\d(?!\d)")),
+                   ("id", re.compile(r"(?<!\d)\d{9,}(?!\d)")))
+
+
+def find_sensitive(cfg, text: str, sensitive: bool = True) -> dict:
+    """Spans of personal or secret-looking data, for screening text before it leaves the machine. Patterns plus a
+    model; every span the model names must occur verbatim in the text or the call fails."""
+    _check_text(text)
+    schema = {"type": "object", "properties": {"spans": {"type": "array", "items": {
+        "type": "object", "properties": {"text": {"type": "string", "minLength": 1}, "kind": {"type": "string", "enum": SENSITIVE_KINDS}},
+        "required": ["text", "kind"], "additionalProperties": False}}}, "required": ["spans"], "additionalProperties": False}
+    task = ("List every span in the data that is personal or secret: person names, email addresses, phone numbers, "
+            "identifiers, postal addresses, passwords, keys, tokens. Copy each span exactly as written. "
+            "List nothing that is not in the data.")
+    cfg = _routed(cfg, "find_sensitive")
+    out = _go(cfg, "find_sensitive", lambda order=None: (task, schema), text, "spans", None, sensitive)
+    spans = {(m.group(0), kind): "rule" for kind, rx in SENSITIVE_RULES for m in rx.finditer(text)}
+    for s in out["spans"]:
+        if s["text"] not in text:
+            raise SchemaError(f"model named a span that is not in the text: {s['text'][:60]!r}", str(out)[:200])
+        spans.setdefault((s["text"], s["kind"]), "model")
+    return {"found": bool(spans), "spans": [{"text": t, "kind": k, "by": by} for (t, k), by in spans.items()]}
+
+
+SAME_SCHEMA = {"type": "object", "properties": {"verdict": {"type": "string", "enum": ["same", "different", "partly"]},
+                                                "evidence": {"type": "string"}},
+               "required": ["verdict", "evidence"], "additionalProperties": False}
+
+
+def _squash(s: str) -> str:
+    return " ".join(s.split()).lower()
+
+
+def same(cfg, a: str, b: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Do two texts say the same thing? same / different / partly, plus evidence quoted from one of the texts."""
+    _check_text(a)
+    _check_text(b)
+    clean = lambda t: t.replace("=====", "== ==")
+    text = f"=====A=====\n{clean(a)}\n=====B=====\n{clean(b)}"
+    task = ("The data holds two texts, A and B. Say whether they state the same facts: same, different, or partly. "
+            "For different or partly, put in evidence one short phrase copied exactly from A or B that shows the "
+            "difference; for same, leave evidence empty." + (f" {hint}" if hint else ""))
+    cfg = _routed(cfg, "same")
+    out = _go(cfg, "same", lambda order=None: (task, SAME_SCHEMA), text, "comparison", None, sensitive)
+    ev = out["evidence"].strip()
+    if out["verdict"] == "same":
+        return {"verdict": "same", "evidence": ""}
+    if not ev or not any(_squash(ev) in _squash(t) for t in (a, b)):
+        raise SchemaError("model gave no evidence that appears in either text", str(out)[:200])
+    return {"verdict": out["verdict"], "evidence": ev}
 
 
 ASK_SCHEMA = {"type": "object",

@@ -11,7 +11,12 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 | `classify(text, labels, hint="")` | Picks exactly one of the given labels (1 to 50, unique). Returns `{"label": ...}`. |
 | `extract(text, schema, hint="")` | Fills an object matching your JSON Schema (`"type": "object"`). Returns the object. |
 | `summarize(text, max_words=100)` | Summary in at most `max_words` words (5 to 1000). Returns `{"summary": ...}`. |
+| `tag(text, labels, max_labels=3, hint="")` | Zero or more of the given labels (at most `max_labels`). Returns `{"labels": [...]}`. |
+| `find_sensitive(text)` | Personal or secret-looking spans (names, emails, phones, ids, addresses, keys): patterns plus a model. Every span the model names must occur verbatim in the text, or the call fails. Returns `{"found", "spans": [{text, kind, by}]}`. |
+| `same(a, b, hint="")` | Do two texts state the same facts? `same`, `different` or `partly`, with a phrase quoted from one of the texts as evidence. |
 | `classify_file`, `extract_file`, `summarize_file` | Same, but reading UTF-8 text from a local file path. |
+
+`tag`, `find_sensitive` and `same` are served by any model whose `caps` allow them (all models by default). A roster whose models list explicit `caps` without them keeps working; calling the tool then says no model serves it.
 
 ## How it behaves
 

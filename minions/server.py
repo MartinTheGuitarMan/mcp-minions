@@ -50,6 +50,29 @@ def summarize(text: str, max_words: int = 100, sensitive: bool = True) -> dict:
 
 @mcp.tool()
 @guarded
+def tag(text: str, labels: list[str], max_labels: int = 3, hint: str = "", sensitive: bool = True) -> dict:
+    """Pick every label that clearly applies to the text (none to max_labels). Returns {"labels": [...]}."""
+    return tools.tag(Roster.from_env(), text, labels, max_labels, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
+def find_sensitive(text: str, sensitive: bool = True) -> dict:
+    """Find personal or secret-looking spans (names, emails, phones, ids, addresses, keys) before text leaves the
+    machine. Patterns plus a local model; each span is checked to occur verbatim in the text."""
+    return tools.find_sensitive(Roster.from_env(), text, sensitive)
+
+
+@mcp.tool()
+@guarded
+def same(a: str, b: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Do two texts state the same facts? Returns verdict same, different or partly, plus a phrase quoted from
+    one of the texts that shows the difference."""
+    return tools.same(Roster.from_env(), a, b, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
 def classify_file(path: str, labels: list[str], hint: str = "") -> dict:
     """Like classify, reading UTF-8 text from a local file (size-capped)."""
     cfg = Roster.from_env()

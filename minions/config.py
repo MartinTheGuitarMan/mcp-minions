@@ -12,7 +12,9 @@ from .errors import BadConfig
 DEFAULT_URLS = {"lmstudio": "http://127.0.0.1:1234/v1", "ollama": "http://127.0.0.1:11434/v1"}
 BACKENDS = (*DEFAULT_URLS, "openai-compat", "systemone")   # openai-compat: any OpenAI-style endpoint, base_url required
 CONSTRAIN = ("json_schema", "json_object", "none")
-TOOLS = ("classify", "extract", "summarize")
+CORE_TOOLS = ("classify", "extract", "summarize")
+OPTIONAL_TOOLS = ("tag", "find_sensitive", "same")   # a roster without a model that serves them simply has no route
+TOOLS = CORE_TOOLS + OPTIONAL_TOOLS
 ASK = "ask"   # open questions: only models marked "knowledge" (they passed the hippo test) may serve it
 KINDS = ("fast", "reasoning", "decision")   # decision: System One model, classify only
 DEFAULT_TIMEOUT = {"fast": 120.0, "reasoning": 600.0, "decision": 60.0}
@@ -182,6 +184,8 @@ class Roster:
                 fast_names = [n for n, c in models.items() if c.kind == "fast" and c.serves(tool)][:1]
             if isinstance(fast_names, str):
                 fast_names = [fast_names]
+            if not fast_names and tool in OPTIONAL_TOOLS and tool not in raw.get("routes", {}):
+                continue   # older rosters with explicit caps keep working; calling the tool says no model serves it
             if not fast_names:
                 raise BadConfig(f"route {tool!r}: no fast model available")
             fast = tuple(ref(n, "fast", tool) for n in fast_names)
