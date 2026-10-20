@@ -86,6 +86,45 @@ New errors (each gets a class, a code and a README entry, as the repo rules requ
 | `MINION_FETCH_DENIED` | A fetch was refused by policy (allowlist, size cap, disk floor, not approved). |
 | `MINION_UNTRUSTED` | The model has not passed the smoke eval for this use. |
 
+### Unused models: the "remove?" tag
+
+Models that are never used still cost disk. Minions tags them; it **never deletes**.
+
+Tracked per model in the state file, fed by the existing `MINION_LOG` (no text stored): `downloaded_at`,
+`last_used` (last call that reached the model), call counts over the last 30 and 90 days, size on disk, last eval
+result and date, trust state, and `pinned` / `snoozed_until`.
+
+A model is tagged `remove?` when all of these hold:
+
+- no calls for `MINION_UNUSED_DAYS` days (default 30), or **14 days since download if it was never called**;
+- it is not the only trusted model for some tool (removing it would leave a tool unserved);
+- it is not `pinned`, and not snoozed;
+- it is not resident right now.
+
+Candidates are ranked by size on disk, largest first. When free disk on the model volume falls below the disk floor
+(section 3), disk pressure raises the priority: the report says so on top, and the idle thresholds are halved for
+tagging purposes (still a tag, nothing more).
+
+**Duplicates.** The same model in both LM Studio and Ollama (matched by normalised name and similar size) is tagged
+`duplicate`, with the combined size and which copy is used. The unused copy is the candidate; the proposal shows
+what the pair holds together.
+
+**Deleting is a separate, owner-approved step.** `minion_propose_remove <model>` prints a proposal and runs nothing:
+
+```
+Proposal r-003
+  model:      example/old-model-7b  (LM Studio)
+  path:       <model directory>/example/old-model-7b
+  size:       4.4 GB   frees 4.4 GB (disk free 38 GB now, 42.4 GB after)
+  last used:  never since download, 19 days ago
+  command:    lms rm example/old-model-7b     (shown, not run)
+  note:       downloaded files can always be fetched again; this removes only the local copy
+  answers:    remove | pin (keep, never tag again) | snooze (ask again in 30 days)
+```
+
+Only an explicit `remove` runs the command, once, for that proposal. `pin` and `snooze` are recorded in the state
+file. Failure of the delete command is reported as is; nothing is retried.
+
 ## 2. The quiet gate
 
 Checked **before every load**, never after. A call that finds the model already resident skips the gate: using what
@@ -234,7 +273,8 @@ call lines are unchanged). **No text, no prompts, no answers**, as today.
 
 `minion_report` gets a `lifecycle` block next to `tokens`: loads, unloads, refusals by gate reason, busy fallbacks
 (calls answered by a fallback because the gate said no), downloads (count, GB, restarts, stalls), total model
-resident hours, and the token estimate separately. The honest framing in the report stays: the saving figure is an
+resident hours, and the token estimate separately. It also lists the `remove?` and `duplicate` models with
+last-used date, size and reclaimable total, plus a disk-free line for the model volume (flagged when below the floor). The honest framing in the report stays: the saving figure is an
 estimate; resident hours are what the dynamic model costs the machine and are shown beside it so the trade is
 visible.
 
@@ -279,15 +319,132 @@ marker file as temp files), and the existing fake backend for the router. Subpro
    TTL is passed at load time. Log events and the `minion_report` lifecycle block. Tests: fallback ladder order
    including privacy (a sensitive call is never answered by cloud because the machine is busy), `busy: fail`, no
    change when no model has `manage: true`, hard failures still propagate.
-4. **Smoke eval and trust levels.** `scripts/smoke_eval.py` with invented cases in `evals/`, state-file trust
+4. **Usage tracking and `remove?` tags.** Per-model usage in the state file from the log, tag rules, duplicate
+   detection, report section, `minion_propose_remove` with pin and snooze. Proposes only; the delete command is
+   shown, never run, in this step. Tests: tag rules on a fake log and fake clock (idle days, never-used 14 days, only
+   trusted model for a tool, pinned, snoozed, resident, disk-pressure halving), duplicate matching, ranking by size,
+   and that no code path calls a delete without an approval object.
+5. **Smoke eval and trust levels.** `scripts/smoke_eval.py` with invented cases in `evals/`, state-file trust
    fields, `MINION_UNTRUSTED`. Tests: grading functions on canned replies (pass, fail, borderline), loop detector,
    the "knowledge never set automatically" rule.
-5. **Propose-and-approve fetch.** Proposal object, approval tool, disk floor, size cap, lock, stall detector and
+6. **Propose-and-approve fetch.** Proposal object, approval tool, disk floor, size cap, lock, stall detector and
    restart logic. Tests: fake downloader that grows a `.part` file, stalls, resumes; floor and cap arithmetic;
    second proposal queues; approval is single-use. Optional auto-fetch (`MINION_FETCH_AUTO`) is the last, separate
    commit and may never ship.
 
 README entries and the repo's error-code rule are part of each step.
+
+## 8. Several machines
+
+The design covers a small fleet, not one computer. The example fleet: a **laptop** (24 GB, also the owner's work
+machine, so it is the quiet-gate machine) and an always-on **server** (a small desktop that runs a nightly job in a
+fixed window and whose internal disk is nearly full, with larger external volumes attached). Names below are
+roster-level labels (`laptop`, `server`), not hostnames.
+
+### One inventory, one row per copy
+
+```
+model                    machine  runtime    path (as the machine sees it)         size    last_used   calls30  trust
+example/qwen3-14b-4bit   laptop   lmstudio   <model dir>/example/qwen3-14b-4bit    8.4 GB  2 days ago  41       smoke
+example/qwen3-14b-4bit   server   ollama     <model dir>/blobs/...                 9.0 GB  never       0        untrusted
+```
+
+The key is (normalised model name, machine, runtime). Name matching strips quantisation and publisher noise, then
+compares size within 15 percent; a match that is not certain is shown as "possible duplicate", not tagged.
+
+### Reaching the server: plain SSH, read-only
+
+Options: (a) a small agent on the server, (b) SSH calls from the laptop. **Choose (b).** An agent is a new process
+to install, secure and keep running; SSH already exists and the server needs nothing new.
+
+- A host alias in the owner's own SSH config (`ssh server ...`), key-based, non-interactive. Non-interactive shells
+  often lack the package manager's directory in `PATH` (on macOS with Homebrew, `/opt/homebrew/bin`), so commands
+  are called by absolute path or with `PATH` set in the command. The alias and paths live in the owner's config, not
+  in this repo.
+- A **fixed allowlist of read-only commands**, each a constant string, never built from model output or caller text:
+  `lms ls --json`, `lms ps --json`, `ollama list`, `ollama ps`, `df -k <model volume>`, `memory_pressure`,
+  `pmset -g batt`, `stat` on the hold marker. No write command exists in the SSH wrapper.
+- Short timeouts (5 s connect, 15 s command). An unreachable server is `unreachable` in the inventory, never an
+  error for a tool call, and its usage is simply absent from the aggregate (the report says so).
+- The server must run **nothing new**: LM Studio or Ollama as today, the owner's SSH login, and optionally the hold
+  marker file written by the night job. Installing anything there is the owner's decision.
+- Usage logs: each machine writes its own `MINION_LOG`; the laptop reads the server's with one `cat`-style
+  read-only call (or the owner copies it), and merges by model. No text is in these logs, so nothing sensitive moves.
+
+### Placement
+
+A roster entry says where it may run:
+
+```json
+"q14": {"backend": "lmstudio", "model": "example/qwen3-14b-4bit", "manage": true,
+        "machine": ["server", "laptop"]}
+```
+
+`machine` is a list of allowed machines in preference order, or `"any"`. Each machine has a profile in the owner's
+local config: `base_url`, runtime, model volume, `role` (`quiet-gate` for the work laptop, `server` for the always-on
+box), `night_windows`, `disk_floor_gb`, `max_model_gb`.
+
+Rules for where a model **lives** (disk):
+
+1. A model's files go on a volume with at least the disk floor free **after** the download. The nearly full system
+   disk is excluded by that rule alone; large external volumes qualify. A runtime whose model directory sits on the
+   full disk is flagged in the inventory ("model dir on a volume at 96 percent") and the owner moves the directory
+   or leaves fetching off there.
+2. **One home per model.** Normally the machine where it is used. A second copy is allowed only if the first machine
+   cannot serve it (too large for its memory) or the owner pins both.
+3. Small models (under about 6 GB) that serve everyday routes live on the always-on server, since it is idle most
+   of the day. Large models (above about 6 GB, one at a time) live where the memory is: the laptop, when quiet, or
+   the server if it has more. The work laptop is never the default home for a model nobody asked it to run.
+
+Rules for where a call **runs** (when more than one allowed machine could serve it), in order:
+
+1. A machine where the model is **already resident**.
+2. Otherwise, among machines where the quiet gate would allow a load, the one with the most free memory.
+3. The server is **never loaded or fetched on during its night window**, whatever the free memory; a resident model
+   there still serves.
+4. If no machine passes, the fallback ladder of section 2 applies unchanged (smaller model, cloud only if not
+   sensitive, `MINION_BUSY`). Sensitive text goes only to machines the roster marks local; the privacy gate does not
+   know about placement and must not be loosened by it.
+5. The remote server is reached through its own runtime's HTTP endpoint (a roster `base_url` on the owner's network).
+   This is a **local** address by the existing rule only if it is a private network address; any other host needs
+   `cloud: true`.
+
+The gate runs per machine: laptop probes locally, server probes through the read-only SSH list. A probe that fails
+means "not safe to load" there, as in section 6.
+
+### Duplicates across machines and runtimes
+
+Flagged `duplicate` when the same model exists on both machines, or in both runtimes on one. The inventory shows the
+combined size and the **reclaimable** size (the copy that is not the home). Policy: keep it where it is used, not
+both. Which copy to remove is a proposal, ranked by size, with pin and snooze as in the `remove?` flow. A pinned
+copy is never proposed.
+
+### `remove?` per copy, usage per model
+
+Tags attach to a **copy** (one inventory row), but usage is **aggregated across machines**: a model used on the
+server is not unused because the laptop never calls it. The rules of the earlier section then apply to the copy:
+
+- A copy is tagged when the *model* has no calls anywhere for N days **or** when the model is used only on another
+  machine and this copy is the unused duplicate.
+- Disk pressure is per machine: the report's disk-free line is listed for every machine, and the server's full disk
+  raises the priority of copies on that disk, not of copies elsewhere.
+- Unreachable machine: its copies are shown as "not checked", never tagged on stale data.
+
+### Safety
+
+- The design's tooling never writes to the server. Every download and every delete, on either machine, is
+  propose-and-approve. For the server the proposal contains the **exact command to run there**; the owner runs it,
+  or approves it separately. No write path over SSH exists in the code.
+- No secrets: SSH keys, host names, volume names and paths stay in the owner's local config and state directory,
+  never in the repo, the roster examples or the logs.
+- Cloud routes and the privacy gate are untouched by multi-machine support.
+
+### Rollout addition
+
+Step 1 (read-only status) gains a second inventory source: the SSH wrapper and its fixed command list. Tests use a
+fake SSH function that returns recorded outputs (invented), plus a check that the wrapper rejects any command not on
+the list and that the inventory still works with the server unreachable. Cross-machine placement lands with step 3;
+duplicate tagging with step 4.
 
 ## Decisions for Martin
 
@@ -303,3 +460,10 @@ README entries and the repo's error-code rule are part of each step.
 | 8 | **When busy** | fall back / fail | **Fall back to a resident or smaller local model, cloud only if not sensitive, otherwise `MINION_BUSY`.** |
 | 9 | **Who may set `knowledge: true`** | auto after eval / human only | **Human only**, after both false-premise cases and a look at the raw replies. |
 | 10 | **First build step** | status / load tools | **Read-only status** (step 1): useful alone and loads nothing. |
+| 11 | **Idle days before `remove?`** | 14 / 30 / 60 | **30 days; 14 if never used since download.** Halved under disk pressure. |
+| 12 | **Deleting unused models** | never auto / auto after N days / auto only under disk pressure | **Never automatic.** Tag, propose with the command, and delete only on an explicit yes; pin and snooze as the other answers. |
+| 13 | **How the second machine is reached** | SSH call / small agent / shared folder | **Plain SSH, read-only commands from a fixed list.** Nothing new installed on the server. |
+| 14 | **Where models live** | each machine its own / one home plus the other borrows | **One home per model** (placement rule), duplicates tagged. Large files on a large volume, never the nearly full system disk. |
+| 15 | **Default machine for a roster entry** | laptop / server / either | **`machine: "any"` with preference for the idle one**; small always-on models on the server, large ones on the laptop when it is quiet. |
+| 16 | **Server at night** | allowed with small models / never | **Never load or fetch in the night window**; already-resident models keep serving. |
+| 17 | **Remote delete or fetch** | via SSH after approval / owner does it by hand | **Owner does it by hand.** The tool prints the exact command for that machine; it never writes over SSH. |
