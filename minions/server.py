@@ -135,6 +135,10 @@ def minion_report(days: float = 7.0) -> dict:
 
 
 def main() -> None:
+    import sys
+    if sys.argv[1:2] == ["init"]:
+        from . import init
+        raise SystemExit(init.main(sys.argv[2:]))
     mcp.run()
 
 
