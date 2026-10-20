@@ -307,7 +307,7 @@ Each step ships alone, with tests that need no real model: a fake `Driver`, a fa
 marker file as temp files), and the existing fake backend for the router. Subprocess calls (`lms`, `memory_pressure`,
 `pmset`) go through one function that tests replace.
 
-1. **Read-only status.** `Driver.status/installed` for both backends, gate probes, `minion_status` shows
+1. **Read-only status** (implemented: `minions/lifecycle.py`, opt-in via `MINION_LIFECYCLE=1`). `Driver.status/installed` for both backends, gate probes, `minion_status` shows
    resident models, gate decision and disk free. No state file, no loads. Tests: parse recorded `lms ps --json`,
    `/api/ps` and `memory_pressure` outputs (invented samples); gate truth table (free, large model, marker, window,
    battery, probe failure).

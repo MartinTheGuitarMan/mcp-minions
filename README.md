@@ -106,6 +106,20 @@ A roster can include hosted models next to local ones, for **public text** only.
 
 `ask(question, sensitive=true)` returns `{answer, confidence}` for a general question. Small models invent facts when a question has a false premise, so only models marked `"knowledge": true` in the roster may serve it, and you should set that flag only after the model passes a false-premise test (for example: "summarize the 2019 paper that first described a species that does not exist" must get "I cannot confirm that", not an invented paper). Without such a model the tool answers `MINION_BAD_INPUT`. The privacy gate applies as for every tool: a cloud model gets the question only with `sensitive=false`. Do not use `ask` for anything that must be exactly right.
 
+## Machine status (read-only, opt-in)
+
+Set `MINION_LIFECYCLE=1` and `minion_status` gains a `lifecycle` block: which models are resident and installed in LM Studio (`lms ps/ls --json`) and Ollama (`/api/ps`, `/api/tags`), free memory, memory pressure, power, an optional hold marker, quiet windows, free disk on the model volume, and whether a model load *would* be allowed right now. It only reads: nothing is loaded, unloaded, downloaded or deleted, and only a fixed list of read-only commands is ever run. A probe that cannot be read blocks the load verdict. Design and next steps: [docs/dynamic-models.md](docs/dynamic-models.md).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MINION_LIFECYCLE` | unset | `1` adds the `lifecycle` block to `minion_status` |
+| `MINION_MIN_FREE_PCT` | `45` | Free memory needed before a load would be allowed |
+| `MINION_LARGE_GB` | `6` | A resident model above this counts as large (one at a time) |
+| `MINION_HOLD_FILE` / `MINION_HOLD` | `~/.minions/hold` / unset | A present file (optional reason line, optional ISO expiry line) or `MINION_HOLD=1` blocks loads |
+| `MINION_QUIET_WINDOWS` | unset | Comma-separated local-time windows such as `23:00-06:00` |
+| `MINION_ALLOW_BATTERY` | unset | `1` allows loads on battery |
+| `MINION_MODEL_DIR` | unset | Folder on the model volume, for the free-disk line |
+
 ## Decision models (System One)
 
 A System One model answers a typed question about a text with a probability instead of generating text. A roster entry like TypeSafe's Jev (`"backend": "systemone", "kind": "decision"`, optionally `"cloud": true` with `key_env`) can serve `classify` only. It works in two ways:

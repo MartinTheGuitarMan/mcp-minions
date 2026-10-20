@@ -7,7 +7,7 @@ import jsonschema
 
 import time
 
-from . import calllog, ratelimit, router, tokens
+from . import calllog, lifecycle, ratelimit, router, tokens
 from .config import ASK, Roster
 from .errors import BadInput, MinionError
 
@@ -130,5 +130,8 @@ def status(cfg) -> dict:
         if quota:
             row["provider_quota"] = quota
         rows.append(row)
-    return {"models": rows, "note": "used_last_minute is counted by this server; provider_quota is what the "
-            "provider reported with its latest reply (absent until the minion has been called in this server process)"}
+    out = {"models": rows, "note": "used_last_minute is counted by this server; provider_quota is what the "
+           "provider reported with its latest reply (absent until the minion has been called in this server process)"}
+    if os.environ.get("MINION_LIFECYCLE") == "1":   # opt-in, read-only: resident/installed models and the load gate
+        out["lifecycle"] = lifecycle.snapshot(roster)
+    return out
