@@ -439,6 +439,32 @@ server is not unused because the laptop never calls it. The rules of the earlier
   never in the repo, the roster examples or the logs.
 - Cloud routes and the privacy gate are untouched by multi-machine support.
 
+### Server autonomy levels
+
+One setting, `MINION_SERVER_LEVEL` (0 to 3), chosen by the owner per machine. **Default is 1.** Each level includes
+the one before. A level above 0 means a small job runs **on the server itself** (a launchd or cron entry calling a
+read-only-by-default script from this repo); it is installed by the owner, never by minions, and it writes only to
+its own state directory and the hold marker. The "never writes over SSH" rule is unchanged: the laptop still has no
+write path to the server.
+
+| Level | The server does by itself | Still needs the owner |
+|---|---|---|
+| 0 | Nothing. The laptop reads it over SSH. | Every fetch and delete. |
+| **1 (default)** | Nightly inventory and `remove?`/`duplicate` tagging after the night window ends; writes its own usage summary; writes the hold marker for the night window. Idle unload comes from the backend TTL. | Every fetch and delete. |
+| 2 | Auto-fetch, only when all hold: model on the allowlist, under the size cap, target volume is not the system volume and stays above the disk floor after the download, outside the night window, quiet gate passes, one download at a time. The model stays `untrusted` until the smoke eval passes. | Every delete. |
+| 3 | Auto-delete of safe kinds only: stale `.part` files older than a set age, and exact duplicates of a model whose other copy is pinned. Each is logged with name and size. | Deleting any real model, always. |
+
+Notes:
+
+- Level 2 needs a model directory on a large volume first. While the runtime still stores models on the nearly full
+  system disk, the disk-floor rule refuses every fetch, which is the intended result; the owner moves the directory
+  (or leaves the level at 1).
+- Level 2 supersedes the "the owner runs fetches by hand on the server" default for allowlisted models only. Every
+  fetch outside the allowlist is still a proposal with the exact command.
+- A job that cannot read its config, or whose gate probe fails, does nothing and writes why. It never retries in a
+  loop.
+- Each level change is the owner's edit of one setting; minions never raises it.
+
 ### Rollout addition
 
 Step 1 (read-only status) gains a second inventory source: the SSH wrapper and its fixed command list. Tests use a
@@ -466,4 +492,5 @@ duplicate tagging with step 4.
 | 14 | **Where models live** | each machine its own / one home plus the other borrows | **One home per model** (placement rule), duplicates tagged. Large files on a large volume, never the nearly full system disk. |
 | 15 | **Default machine for a roster entry** | laptop / server / either | **`machine: "any"` with preference for the idle one**; small always-on models on the server, large ones on the laptop when it is quiet. |
 | 16 | **Server at night** | allowed with small models / never | **Never load or fetch in the night window**; already-resident models keep serving. |
-| 17 | **Remote delete or fetch** | via SSH after approval / owner does it by hand | **Owner does it by hand.** The tool prints the exact command for that machine; it never writes over SSH. |
+| 17 | **Remote delete or fetch** | via SSH after approval / owner does it by hand | **Owner does it by hand** (except allowlisted fetches at level 2). The tool prints the exact command for that machine; it never writes over SSH. |
+| 18 | **Server autonomy level** | 0 / 1 / 2 / 3 | **1:** nightly inventory and tagging plus the hold marker run on the server by themselves; fetches and deletes still ask. Needs the owner to install one small scheduled job there. Move to 2 only after the model directory is on a large volume. |
