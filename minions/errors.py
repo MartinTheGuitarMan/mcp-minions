@@ -48,3 +48,13 @@ class RateLimited(MinionError):
     def __init__(self, message: str, retry_after: float | None = None):
         super().__init__(message)
         self.retry_after = retry_after
+
+
+class Busy(MinionError):
+    """A model load was refused by the quiet gate (low memory, hold marker, quiet window, battery, ...)."""
+    code = "MINION_BUSY"
+
+
+class LoadFailed(MinionError):
+    """The runtime tried to load or unload a model and failed, or the model is not resident afterwards."""
+    code = "MINION_LOAD_FAILED"

@@ -18,7 +18,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 - **Schema first, then verify.** Each call asks the backend for schema-constrained JSON, and then checks the reply with `jsonschema`. Whether a backend actually enforces the schema varies, so a reply that is not valid JSON or does not match the schema is an error, not a guess.
 - **No silent fallback.** If the backend is down you get `MINION_DOWN`. Nothing is retried on another model. The one exception is a rate limit on a route with a configured `fallback` (see cloud minions).
 - **Untrusted input.** Your text is wrapped in `<data>` tags, a closing `</data>` inside it is neutralised, and the system prompt tells the model never to follow instructions found in the data. This reduces prompt-injection risk. It is not a guarantee, which is why the output schema is checked in code.
-- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, and (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`.
+- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`, and (managed models) `MINION_BUSY` and `MINION_LOAD_FAILED`.
 
 ## Install and run
 
@@ -119,6 +119,15 @@ Set `MINION_LIFECYCLE=1` and `minion_status` gains a `lifecycle` block: which mo
 | `MINION_QUIET_WINDOWS` | unset | Comma-separated local-time windows such as `23:00-06:00` |
 | `MINION_ALLOW_BATTERY` | unset | `1` allows loads on battery |
 | `MINION_MODEL_DIR` | unset | Folder on the model volume, for the free-disk line |
+
+## Managed models: `minion_load` and `minion_unload`
+
+A local LM Studio or Ollama roster entry with `"manage": true` (optional `context` default 4096, `ttl_s` default 600, `mem_gb` estimate) can be loaded and unloaded by minions. The runtime unloads it itself after `ttl_s` idle seconds.
+
+- `minion_load(name)` loads it only if the quiet gate passes (see the machine status variables above): enough free memory, no memory pressure, on AC power, no hold marker or quiet window, and no other large model. Otherwise it raises `MINION_BUSY` with the reasons and changes nothing. If another large model that minions itself loaded is resident, that one is unloaded first. A runtime failure is `MINION_LOAD_FAILED`.
+- `minion_unload(name)` only unloads a model that minions loaded itself (recorded in `MINION_STATE_DIR`, default `~/.minions`). A model loaded by anything else is never unloaded from here.
+- Unmanaged models are never touched. Loads, unloads and refusals are logged as events in `MINION_LOG` (no text) and counted in `minion_report` under `lifecycle`.
+- Nothing downloads or deletes. See [docs/dynamic-models.md](docs/dynamic-models.md).
 
 ## Decision models (System One)
 

@@ -20,7 +20,8 @@ from typing import Callable
 # The only commands this module may run. Constants, never built from caller text or model output.
 ALLOWED = {
     ("lms", "ps", "--json"), ("lms", "ls", "--json"),
-    ("memory_pressure",), ("sysctl", "-n", "kern.memorystatus_vm_pressure_level"), ("pmset", "-g", "batt"),
+    ("memory_pressure",), ("sysctl", "-n", "kern.memorystatus_vm_pressure_level"), ("sysctl", "-n", "hw.memsize"),
+    ("pmset", "-g", "batt"),
 }
 GB = 1024 ** 3
 

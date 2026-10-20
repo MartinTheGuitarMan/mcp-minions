@@ -37,6 +37,10 @@ class Config:
     rpm: int | None = None       # requests per minute, counted locally
     constrain: str = "json_schema"   # how the schema is requested: json_schema | json_object | none
     knowledge: bool = False      # trusted with open questions: set only after it passed the false-premise (hippo) test
+    manage: bool = False         # minions may load and unload this local model (docs/dynamic-models.md)
+    context: int = 4096          # context length used when minions loads it
+    ttl_s: int = 600             # idle seconds before the runtime unloads it
+    mem_gb: float | None = None  # estimated resident size, for the quiet gate
 
     def serves(self, tool: str) -> bool:
         if tool == ASK and not self.knowledge:
@@ -147,6 +151,13 @@ class Roster:
             constrain = m.get("constrain", "json_schema")
             if constrain not in CONSTRAIN:
                 raise BadConfig(f"model {name!r}: constrain must be one of {CONSTRAIN}")
+            manage = bool(m.get("manage", False))
+            if manage and (cloud or backend not in ("lmstudio", "ollama")):
+                raise BadConfig(f"model {name!r}: \"manage\" only applies to local lmstudio or ollama models")
+            context, ttl_s, mem_gb = m.get("context", 4096), m.get("ttl_s", 600), m.get("mem_gb")
+            if not (isinstance(context, int) and context >= 256 and isinstance(ttl_s, int) and ttl_s >= 60
+                    and (mem_gb is None or (isinstance(mem_gb, (int, float)) and mem_gb > 0))):
+                raise BadConfig(f"model {name!r}: context must be an integer >= 256, ttl_s an integer >= 60, mem_gb > 0")
             models[name] = Config(
                 backend=backend, base_url=base_url.rstrip("/"),
                 model=m["model"], timeout=float(m.get("timeout", DEFAULT_TIMEOUT[kind])),
@@ -154,6 +165,7 @@ class Roster:
                 kind=kind, name=name, max_tokens=m.get("max_tokens"),
                 cloud=cloud, key_env=key_env, caps=tuple(caps) if caps is not None else None, rpm=rpm,
                 constrain=constrain, knowledge=bool(m.get("knowledge", False)),
+                manage=manage, context=context, ttl_s=ttl_s, mem_gb=float(mem_gb) if mem_gb is not None else None,
             )
 
         def ref(name, role, tool):

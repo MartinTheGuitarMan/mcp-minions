@@ -90,6 +90,21 @@ def minion_status() -> dict:
 
 @mcp.tool()
 @guarded
+def minion_load(name: str) -> dict:
+    """Load a roster model marked "manage": true, only if the machine is quiet (free memory, no hold marker or quiet
+    window, on AC power, no other large model). Refused loads raise MINION_BUSY with the reasons."""
+    return tools.load_model(Roster.from_env(), name)
+
+
+@mcp.tool()
+@guarded
+def minion_unload(name: str) -> dict:
+    """Unload a managed model that minions loaded itself. Models loaded by anything else are never unloaded."""
+    return tools.unload_model(Roster.from_env(), name)
+
+
+@mcp.tool()
+@guarded
 def minion_report(days: float = 7.0) -> dict:
     """Usage summary from the call log: calls per tool, latency, shortcut answers, judge calls, failovers, errors, tokens handled locally or by cloud, and an
     estimate (not a billing figure) of tokens kept off the calling model."""

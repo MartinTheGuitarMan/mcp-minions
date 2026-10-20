@@ -7,7 +7,7 @@ import jsonschema
 
 import time
 
-from . import calllog, lifecycle, ratelimit, router, tokens
+from . import calllog, lifecycle, manage, ratelimit, router, tokens
 from .config import ASK, Roster
 from .errors import BadInput, MinionError
 
@@ -135,3 +135,13 @@ def status(cfg) -> dict:
     if os.environ.get("MINION_LIFECYCLE") == "1":   # opt-in, read-only: resident/installed models and the load gate
         out["lifecycle"] = lifecycle.snapshot(roster)
     return out
+
+
+def load_model(cfg, name: str) -> dict:
+    """Load a managed local model through its runtime, if the quiet gate allows it."""
+    return manage.load(Roster.coerce(cfg), name)
+
+
+def unload_model(cfg, name: str) -> dict:
+    """Unload a managed model that minions itself loaded."""
+    return manage.unload(Roster.coerce(cfg), name)

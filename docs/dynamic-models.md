@@ -311,7 +311,7 @@ marker file as temp files), and the existing fake backend for the router. Subpro
    resident models, gate decision and disk free. No state file, no loads. Tests: parse recorded `lms ps --json`,
    `/api/ps` and `memory_pressure` outputs (invented samples); gate truth table (free, large model, marker, window,
    battery, probe failure).
-2. **Manual load/unload tools.** `minion_load(name)` and `minion_unload(name)` for roster entries with
+2. **Manual load/unload tools** (implemented: `minions/manage.py`). `minion_load(name)` and `minion_unload(name)` for roster entries with
    `manage: true`, gate applied, state file records ours. Roster validation for the new fields. Tests: a fake
    driver records calls; refusal paths return `MINION_BUSY`; unmanaged models are rejected; never unloads a model
    that is not ours.

@@ -16,6 +16,19 @@ def _path() -> Path | None:
     return Path(p).expanduser() if p else None
 
 
+def event(kind: str, **fields) -> None:
+    """Lifecycle event line (load, unload, refused). Same file, no text; report() keeps these apart from tool calls."""
+    p = _path()
+    if p is None:
+        return
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a") as f:
+            f.write(json.dumps({"ts": round(time.time()), "event": kind, **{k: v for k, v in fields.items() if v is not None}}) + "\n")
+    except OSError:
+        pass
+
+
 def record(tool: str, sensitive: bool, started: float, text: str, meta: dict | None, error: str | None,
            usage: dict | None = None) -> None:
     p = _path()
@@ -84,18 +97,23 @@ def report(days: float = 7.0) -> dict:
         return {"log": str(p) if p else None, "calls": 0,
                 "note": "no log yet: set MINION_LOG to a file path and make some calls"}
     cutoff = time.time() - days * 86400
-    rows = []
+    rows, events = [], []
     for line in p.read_text().splitlines():
         try:
             r = json.loads(line)
         except ValueError:
             continue
-        if r.get("ts", 0) >= cutoff:
-            rows.append(r)
+        if r.get("ts", 0) < cutoff:
+            continue
+        (events if "event" in r else rows).append(r)
     lat = sorted(r["latency_s"] for r in rows)
     pct = lambda q: lat[min(len(lat) - 1, int(len(lat) * q))] if lat else None
     short = Counter(r["shortcut"] for r in rows if r.get("shortcut"))
+    kinds = Counter(e["event"] for e in events)
     return {"days": days, "calls": len(rows),
+            **({"lifecycle": {"loads": kinds["load"], "unloads": kinds["unload"], "refused": kinds["refused"],
+                              "refused_by": dict(Counter(e.get("gate") for e in events if e["event"] == "refused"))}}
+               if events else {}),
             "by_tool": dict(Counter(r["tool"] for r in rows)),
             "sensitive_share": round(sum(1 for r in rows if r.get("sensitive")) / len(rows), 2) if rows else None,
             "errors": dict(Counter(r["error"] for r in rows if r.get("error"))),
