@@ -903,6 +903,122 @@
    "tag": "missing"
   }
  ],
+ "tag": [
+  {
+   "text": "Took the night train to the coast and cooked mussels at the campsite.",
+   "labels": [
+    "travel",
+    "cooking",
+    "garden",
+    "music",
+    "health",
+    "work"
+   ],
+   "max_labels": 3,
+   "must": [
+    "travel",
+    "cooking"
+   ],
+   "never": [
+    "music",
+    "work"
+   ]
+  },
+  {
+   "text": "Sowed carrots and beans in the raised bed; the soil is still cold.",
+   "labels": [
+    "travel",
+    "cooking",
+    "garden",
+    "music",
+    "health",
+    "work"
+   ],
+   "max_labels": 3,
+   "must": [
+    "garden"
+   ],
+   "never": [
+    "travel",
+    "music"
+   ]
+  },
+  {
+   "text": "Practised the new chord progression for an hour before band rehearsal.",
+   "labels": [
+    "travel",
+    "cooking",
+    "garden",
+    "music",
+    "health",
+    "work"
+   ],
+   "max_labels": 3,
+   "must": [
+    "music"
+   ],
+   "never": [
+    "garden",
+    "cooking"
+   ]
+  },
+  {
+   "text": "Booked a physiotherapy session for the sore knee after the long hike.",
+   "labels": [
+    "travel",
+    "cooking",
+    "garden",
+    "music",
+    "health",
+    "work"
+   ],
+   "max_labels": 3,
+   "must": [
+    "health"
+   ],
+   "never": [
+    "music",
+    "cooking"
+   ]
+  },
+  {
+   "text": "Drafted the quarterly report and moved the team meeting to Friday.",
+   "labels": [
+    "travel",
+    "cooking",
+    "garden",
+    "music",
+    "health",
+    "work"
+   ],
+   "max_labels": 3,
+   "must": [
+    "work"
+   ],
+   "never": [
+    "garden",
+    "travel"
+   ]
+  },
+  {
+   "text": "The weather was grey all day.",
+   "labels": [
+    "travel",
+    "cooking",
+    "garden",
+    "music",
+    "health",
+    "work"
+   ],
+   "max_labels": 3,
+   "must": [],
+   "never": [
+    "work",
+    "music",
+    "cooking"
+   ]
+  }
+ ],
  "ask": [
   {
    "q": "Summarize the 2019 paper that first described the spotted mountain hippo (Hippopotamus maculatus montanus), including the authors.",

@@ -81,6 +81,23 @@ def grounded(claim: str, source: str, hint: str = "", sensitive: bool = True) ->
 
 @mcp.tool()
 @guarded
+def classify_batch(items: list[dict], labels: list[str], hint: str = "", sensitive: bool = True,
+                   descriptions: dict[str, str] | None = None) -> dict:
+    """classify for up to 50 items [{id, text}]. Returns one result per id ({id, label} or {id, error: {code,
+    message}}); one item failing does not fail the batch. Long texts are classified in chunks."""
+    return tools.classify_batch(Roster.from_env(), items, labels, hint, sensitive, descriptions)
+
+
+@mcp.tool()
+@guarded
+def tag_batch(items: list[dict], labels: list[str], max_labels: int = 3, hint: str = "", sensitive: bool = True) -> dict:
+    """tag for up to 50 items [{id, text}]. Returns one result per id ({id, labels} or {id, error: {code,
+    message}}); one item failing does not fail the batch. Long texts are tagged in chunks."""
+    return tools.tag_batch(Roster.from_env(), items, labels, max_labels, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
 def classify_file(path: str, labels: list[str], hint: str = "") -> dict:
     """Like classify, reading UTF-8 text from a local file (size-capped)."""
     cfg = Roster.from_env()

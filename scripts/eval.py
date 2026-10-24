@@ -76,6 +76,24 @@ def items(model: Roster, name: str, quorum_only: bool = False):
                 out = tools.grounded(model, g["claim"], g["source"], sensitive=SENS)
                 return out["verdict"] == g["expected"], out
             yield f"grounded/{g['tag']}", f"g{i}", f
+    if m.serves("tag") and DATA.get("tag"):
+        batch = {}   # the tag items go through tag_batch in one call (same labels for all); each item is scored
+
+        def tagged(i):
+            if not batch:
+                t = DATA["tag"]
+                batch.update({r["id"]: r for r in tools.tag_batch(
+                    model, [{"id": str(k), "text": x["text"]} for k, x in enumerate(t)], t[0]["labels"],
+                    t[0]["max_labels"], sensitive=SENS)["results"]})
+            r = batch[str(i)]
+            if "error" in r:
+                raise SchemaError(r["error"]["message"]) if r["error"]["code"] == "MINION_SCHEMA" else MinionError(r["error"]["message"])
+            return r["labels"]
+        for i, t in enumerate(DATA["tag"]):
+            def f(i=i, t=t):
+                got = tagged(i)
+                return set(t["must"]) <= set(got) and not set(t["never"]) & set(got), got
+            yield "tag_batch", f"t{i}", f
     if m.serves(ASK):
         for i, a in enumerate(DATA["ask"]):
             def f(a=a):

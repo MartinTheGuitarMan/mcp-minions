@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from pathlib import Path
 
 import jsonschema
@@ -10,7 +11,7 @@ import time
 
 from . import calllog, engine, lifecycle, manage, ratelimit, router, tokens
 from .config import ASK, Roster
-from .errors import BadInput, MinionError, SchemaError
+from .errors import BadConfig, BadInput, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
 
 def read_text_file(cfg, path: str) -> str:
@@ -56,16 +57,30 @@ def _check_text(text: str) -> None:
         raise BadInput("text must be a non-empty string")
 
 
-def classify(cfg, text: str, labels: list[str], hint: str = "", sensitive: bool = True,
-             descriptions: dict | None = None) -> dict:
-    _check_text(text)
+def _check_labels(labels) -> None:
     if not labels or len(set(labels)) != len(labels) or not all(isinstance(l, str) and l for l in labels):
         raise BadInput("labels must be a non-empty list of unique non-empty strings")
     if len(labels) > 50:
         raise BadInput("at most 50 labels")
+
+
+def _check_classify_args(labels, descriptions) -> None:
+    _check_labels(labels)
     if descriptions is not None and (not isinstance(descriptions, dict) or not set(descriptions) <= set(labels)
                                      or not all(isinstance(v, str) for v in descriptions.values())):
         raise BadInput("descriptions must map labels from the label list to short strings")
+
+
+def _check_tag_args(labels, max_labels) -> None:
+    _check_labels(labels)
+    if not isinstance(max_labels, int) or not 1 <= max_labels <= len(labels):
+        raise BadInput("max_labels must be an integer between 1 and the number of labels")
+
+
+def classify(cfg, text: str, labels: list[str], hint: str = "", sensitive: bool = True,
+             descriptions: dict | None = None) -> dict:
+    _check_text(text)
+    _check_classify_args(labels, descriptions)
     meaning = ("\nLabel meanings:\n" + "\n".join(f"- {l}: {d}" for l, d in descriptions.items())) if descriptions else ""
 
     def build(order=None):
@@ -102,12 +117,7 @@ def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> d
 def tag(cfg, text: str, labels: list[str], max_labels: int = 3, hint: str = "", sensitive: bool = True) -> dict:
     """Zero or more of the given labels (at most max_labels). Like classify, but the text may fit several."""
     _check_text(text)
-    if not labels or len(set(labels)) != len(labels) or not all(isinstance(l, str) and l for l in labels):
-        raise BadInput("labels must be a non-empty list of unique non-empty strings")
-    if len(labels) > 50:
-        raise BadInput("at most 50 labels")
-    if not isinstance(max_labels, int) or not 1 <= max_labels <= len(labels):
-        raise BadInput("max_labels must be an integer between 1 and the number of labels")
+    _check_tag_args(labels, max_labels)
     schema = {"type": "object", "properties": {"labels": {"type": "array", "items": {"type": "string", "enum": list(labels)},
                                                           "uniqueItems": True, "maxItems": max_labels}},
               "required": ["labels"], "additionalProperties": False}
@@ -115,6 +125,124 @@ def tag(cfg, text: str, labels: list[str], max_labels: int = 3, hint: str = "", 
             "Pick none if none applies." + (f" {hint}" if hint else ""))
     cfg = _routed(cfg, "tag")
     return _go(cfg, "tag", lambda order=None: (task, schema), text, "tags", None, sensitive)
+
+
+MAX_BATCH = 50          # items per batch call
+CHUNK_CHARS = 8000      # about 2000 tokens: fits the default 4096-token context with the prompt
+MAX_CHUNKS = 4          # a longer text is cut after this many chunks and marked truncated
+# after one of these the rest of the batch would fail the same way (or hammer a limit), so it is not attempted
+BATCH_STOP = (MinionDown, RateLimited, PrivacyRefused, BadConfig)
+
+
+def chunks(text: str) -> tuple[list[str], bool]:
+    """Split a long text at paragraph breaks into pieces of at most CHUNK_CHARS (a longer paragraph is cut at
+    a space). Returns (at most MAX_CHUNKS pieces, whether anything was dropped)."""
+    if len(text) <= CHUNK_CHARS:
+        return [text], False
+    out, cur = [], ""
+    for para in re.split(r"\n\s*\n", text):
+        while len(para) > CHUNK_CHARS:
+            cut = para.rfind(" ", 0, CHUNK_CHARS)
+            cut = cut if cut > CHUNK_CHARS // 2 else CHUNK_CHARS
+            if cur:
+                out.append(cur)
+                cur = ""
+            out.append(para[:cut])
+            para = para[cut:].lstrip()
+        if cur and len(cur) + 2 + len(para) > CHUNK_CHARS:
+            out.append(cur)
+            cur = para
+        else:
+            cur = f"{cur}\n\n{para}" if cur else para
+    out.append(cur)
+    out = [c for c in out if c.strip()]
+    return out[:MAX_CHUNKS], len(out) > MAX_CHUNKS
+
+
+def _check_items(items) -> list[tuple[str, str]]:
+    if not isinstance(items, list) or not items:
+        raise BadInput("items must be a non-empty list of {id, text} objects")
+    if len(items) > MAX_BATCH:
+        raise BadInput(f"at most {MAX_BATCH} items per batch, got {len(items)}")
+    if not all(isinstance(i, dict) and isinstance(i.get("id"), str) and i["id"] and isinstance(i.get("text"), str)
+               for i in items):
+        raise BadInput("every item needs a non-empty string id and a string text")
+    ids = [i["id"] for i in items]
+    if len(set(ids)) != len(ids):
+        raise BadInput("item ids must be unique")
+    return [(i["id"], i["text"]) for i in items]
+
+
+def _error(e: MinionError, prefix: str = "") -> dict:
+    err = {"code": e.code, "message": prefix + str(e)}
+    if isinstance(e, RateLimited) and e.retry_after is not None:
+        err["retry_after"] = round(e.retry_after, 1)
+    return err
+
+
+def _batch(items: list, one) -> dict:
+    """one(text) -> result for each item, one after another (rate limits and model swaps stay as for single
+    calls). An item's error is reported with that item; an error in BATCH_STOP also marks the rest not attempted."""
+    results, stop = [], None
+    for iid, text in items:
+        if stop is not None:
+            results.append({"id": iid, "error": _error(stop, "not attempted: ")})
+            continue
+        try:
+            if isinstance(text, MinionError):   # a file that could not be read
+                raise text
+            results.append({"id": iid, **one(text)})
+        except MinionError as e:
+            results.append({"id": iid, "error": _error(e)})
+            if isinstance(e, BATCH_STOP):
+                stop = e
+    ok = sum("error" not in r for r in results)
+    return {"results": results, "ok": ok, "failed": len(results) - ok}
+
+
+def _over_chunks(text: str, call, combine) -> dict:
+    pieces, truncated = chunks(text)
+    if len(pieces) == 1 and not truncated:
+        return call(text)
+    out = combine([call(p) for p in pieces])
+    out["chunks"] = len(pieces)
+    if truncated:
+        out["truncated"] = True
+    return out
+
+
+def classify_batch(cfg, items: list, labels: list[str], hint: str = "", sensitive: bool = True,
+                   descriptions: dict | None = None) -> dict:
+    """classify for each {id, text}. A long text is classified per chunk; the chunks' majority label wins,
+    and a tie is MINION_NO_QUORUM for that item."""
+    pairs = _check_items(items)
+    _check_classify_args(labels, descriptions)
+    roster = Roster.coerce(cfg)
+
+    def combine(outs):
+        votes = Counter(o["label"] for o in outs).most_common()
+        if len(votes) > 1 and votes[0][1] == votes[1][1]:
+            raise NoQuorum(f"chunks of the text disagree: {[o['label'] for o in outs]}")
+        return {"label": votes[0][0]}
+
+    call = lambda t: classify(roster, t, labels, hint, sensitive, descriptions)
+    return _batch(pairs, lambda text: _over_chunks(text, call, combine))
+
+
+def tag_batch(cfg, items: list, labels: list[str], max_labels: int = 3, hint: str = "", sensitive: bool = True) -> dict:
+    """tag for each {id, text}. A long text is tagged per chunk; labels are ranked by how many chunks chose
+    them (then first seen) and cut to max_labels."""
+    pairs = _check_items(items)
+    _check_tag_args(labels, max_labels)
+    roster = _routed(cfg, "tag")
+
+    def combine(outs):
+        seen = [l for o in outs for l in o["labels"]]
+        count = Counter(seen)
+        return {"labels": sorted(count, key=lambda l: (-count[l], seen.index(l)))[:max_labels]}
+
+    call = lambda t: tag(roster, t, labels, max_labels, hint, sensitive)
+    return _batch(pairs, lambda text: _over_chunks(text, call, combine))
 
 
 SENSITIVE_KINDS = ["name", "email", "phone", "id", "address", "secret", "other"]
