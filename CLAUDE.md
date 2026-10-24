@@ -30,7 +30,7 @@ uv run python scripts/smoke.py ollama <model> --repeat 5          # live backend
 - **Stable error codes** live in `errors.py`: `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_NO_QUORUM`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, plus `MINION_PRIVACY`, `MINION_RATE_LIMITED`, `MINION_BUSY`, `MINION_LOAD_FAILED`. A new failure mode gets a new class and code, plus a README entry.
 - **Input is untrusted.** Text is wrapped in `<data>` tags, a closing `</data>` inside the text is neutralised, and the prompts tell the model not to follow instructions in the data. Keep `temperature` at 0.
 - **Without `MINION_ROSTER` the single-model behaviour must stay unchanged** (`Roster.single`).
-- **The `*_file` tools can read any UTF-8 file the caller names** (size-capped). Treat that as a security-sensitive surface. Do not widen it (no directory reads, no globbing, no other encodings) without discussing it first.
+- **The `*_file` tools can read any UTF-8 file the caller names** (size-capped), and `classify_files` / `tag_files` read up to 50 files matching a glob inside one folder (`tools.read_folder`: no hidden files, no `..`, nothing outside the folder, always sensitive). Treat that as a security-sensitive surface. Do not widen it further (recursive reads beyond the glob, other encodings, other tools reading folders) without discussing it first.
 - Adding a tool: a thin wrapper in `server.py`, the logic in `tools.py`, a route entry in `config.py` (`TOOLS`), tests with the fake backend, and a row in the README table.
 
 ## This repo is PUBLIC

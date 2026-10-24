@@ -173,6 +173,33 @@ def _check_items(items) -> list[tuple[str, str]]:
     return [(i["id"], i["text"]) for i in items]
 
 
+def read_folder(cfg, folder: str, pattern: str) -> list[tuple[str, object]]:
+    """Batch items from the files in one folder that match a glob, as (path relative to the folder, text or
+    the read error). Regular files only, never outside the folder (a symlink out is skipped), never hidden
+    files or folders (".git", ".env"), at most MAX_BATCH files, each size-capped and UTF-8 like read_text_file."""
+    base = Path(folder).expanduser()
+    if not base.is_dir():
+        raise BadInput(f"not a folder: {folder}")
+    if not isinstance(pattern, str) or not pattern.strip() or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+        raise BadInput("pattern must be a relative glob inside the folder, without ..")
+    root = base.resolve()
+    found = []
+    for p in base.glob(pattern):
+        rel = p.relative_to(base)
+        if any(part.startswith(".") for part in rel.parts) or not p.is_file() or not p.resolve().is_relative_to(root):
+            continue
+        found.append(rel)
+        if len(found) > MAX_BATCH:
+            raise BadInput(f"pattern matches more than {MAX_BATCH} files; narrow it")
+    out = []
+    for rel in sorted(found):
+        try:
+            out.append((rel.as_posix(), read_text_file(cfg, str(base / rel))))
+        except BadInput as e:
+            out.append((rel.as_posix(), e))
+    return out
+
+
 def _error(e: MinionError, prefix: str = "") -> dict:
     err = {"code": e.code, "message": prefix + str(e)}
     if isinstance(e, RateLimited) and e.retry_after is not None:
@@ -217,8 +244,10 @@ def classify_batch(cfg, items: list, labels: list[str], hint: str = "", sensitiv
     and a tie is MINION_NO_QUORUM for that item."""
     pairs = _check_items(items)
     _check_classify_args(labels, descriptions)
-    roster = Roster.coerce(cfg)
+    return _classify_pairs(Roster.coerce(cfg), pairs, labels, hint, sensitive, descriptions)
 
+
+def _classify_pairs(roster, pairs, labels, hint, sensitive, descriptions) -> dict:
     def combine(outs):
         votes = Counter(o["label"] for o in outs).most_common()
         if len(votes) > 1 and votes[0][1] == votes[1][1]:
@@ -234,8 +263,10 @@ def tag_batch(cfg, items: list, labels: list[str], max_labels: int = 3, hint: st
     them (then first seen) and cut to max_labels."""
     pairs = _check_items(items)
     _check_tag_args(labels, max_labels)
-    roster = _routed(cfg, "tag")
+    return _tag_pairs(_routed(cfg, "tag"), pairs, labels, max_labels, hint, sensitive)
 
+
+def _tag_pairs(roster, pairs, labels, max_labels, hint, sensitive) -> dict:
     def combine(outs):
         seen = [l for o in outs for l in o["labels"]]
         count = Counter(seen)
@@ -243,6 +274,21 @@ def tag_batch(cfg, items: list, labels: list[str], max_labels: int = 3, hint: st
 
     call = lambda t: tag(roster, t, labels, max_labels, hint, sensitive)
     return _batch(pairs, lambda text: _over_chunks(text, call, combine))
+
+
+def classify_files(cfg, folder: str, pattern: str, labels: list[str], hint: str = "",
+                   descriptions: dict | None = None) -> dict:
+    """classify_batch over the files of a folder matching a glob (ids are relative paths). Always sensitive."""
+    _check_classify_args(labels, descriptions)
+    roster = Roster.coerce(cfg)
+    return _classify_pairs(roster, read_folder(roster, folder, pattern), labels, hint, True, descriptions)
+
+
+def tag_files(cfg, folder: str, pattern: str, labels: list[str], max_labels: int = 3, hint: str = "") -> dict:
+    """tag_batch over the files of a folder matching a glob (ids are relative paths). Always sensitive."""
+    _check_tag_args(labels, max_labels)
+    roster = _routed(cfg, "tag")
+    return _tag_pairs(roster, read_folder(roster, folder, pattern), labels, max_labels, hint, True)
 
 
 SENSITIVE_KINDS = ["name", "email", "phone", "id", "address", "secret", "other"]

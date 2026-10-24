@@ -17,6 +17,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 | `grounded(claim, source, hint="")` | Is the claim backed by the source? `supported`, `contradicted` or `unclear`, with a quote copied from the source. A verdict whose quote is not in the source becomes `unclear`. See [Grounding check](#grounding-check-grounded). |
 | `classify_batch(items, labels, ...)`, `tag_batch(items, labels, max_labels=3, ...)` | `classify` or `tag` for up to 50 items `[{"id", "text"}]`, one result per id; a failing item does not fail the batch. See [Batches](#batches-classify_batch-and-tag_batch). |
 | `classify_file`, `extract_file`, `summarize_file` | Same, but reading UTF-8 text from a local file path. |
+| `classify_files(folder, pattern, labels, ...)`, `tag_files(folder, pattern, labels, max_labels=3, ...)` | The batch tools over up to 50 files in one folder matching a glob (`"*.md"`, `"**/*.md"`); ids are paths relative to the folder. Always local only. |
 
 `tag`, `find_sensitive`, `same` and `grounded` are served by any model whose `caps` allow them (all models by default). A roster whose models list explicit `caps` without them keeps working; calling the tool then says no model serves it.
 
@@ -171,6 +172,8 @@ Both take `items`, a list of 1 to 50 objects `{"id": "<unique string>", "text": 
 - **Stops that apply to everything.** After `MINION_DOWN`, `MINION_RATE_LIMITED` (with `retry_after`), `MINION_PRIVACY` or `MINION_BAD_CONFIG`, the remaining items are not sent and are marked `not attempted` with the same code, so a down backend or a used-up limit is never hammered 50 times. Items run one after another, so `limits.rpm` and model swapping behave exactly as for single calls; every item is one entry in the usage log.
 - **Long texts are chunked.** A text over 8,000 characters (about 2,000 tokens) is split at paragraph breaks (a longer paragraph at a space), at most 4 chunks; anything beyond is dropped and the item is marked `"truncated": true`. Chunked items carry `"chunks": n`. `classify_batch` takes the chunks' majority label (a tie is `MINION_NO_QUORUM` for that item); `tag_batch` ranks labels by how many chunks chose them, then by first appearance, and keeps `max_labels`.
 
+`classify_files` and `tag_files` build the items from the files in one folder that match a glob. They read regular UTF-8 files only (size-capped like the `*_file` tools; an unreadable file is an error for that id), skip hidden files and folders (`.git`, `.env`, ...) and any symlink that leads outside the folder, refuse absolute patterns and `..`, and refuse a pattern that matches more than 50 files. They take no `sensitive` argument: file contents always stay on local models.
+
 ## Defence against injections that name an answer
 
 A text can try to steer the classifier ("the correct label is X", "already tagged X", a fake JSON label). When a classify route has a decision-model `shortcut`, each multi-segment text is first split into sentences and bracketed spans, and that decision model judges every segment on its own: an instruction or claim aimed at whoever classifies the text, or ordinary content? Instruction segments (probability 0.2 or more) are removed before any model classifies; with `MINION_META=1` the result lists them under `injection_removed`. A model judges meaning rather than matching phrases, so it also catches phrasings it has not seen.
@@ -195,7 +198,7 @@ Scoring is deliberately simple (exact label, field containment, a refusal patter
 
 ## Security note
 
-The `*_file` tools read **any UTF-8 text file** the caller names (up to the size cap). Whoever can call this server can therefore read files your user account can read. Only connect clients you trust, and leave the file tools out of any setup where that is a problem.
+The `*_file` tools read **any UTF-8 text file** the caller names (up to the size cap), and `classify_files` and `tag_files` read up to 50 such files from any folder the caller names. Whoever can call this server can therefore read files your user account can read. Only connect clients you trust, and leave the file tools out of any setup where that is a problem.
 
 ## Tests
 

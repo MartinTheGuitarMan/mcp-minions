@@ -98,6 +98,23 @@ def tag_batch(items: list[dict], labels: list[str], max_labels: int = 3, hint: s
 
 @mcp.tool()
 @guarded
+def classify_files(folder: str, pattern: str, labels: list[str], hint: str = "",
+                   descriptions: dict[str, str] | None = None) -> dict:
+    """Like classify_batch, for up to 50 UTF-8 files in a folder matching a glob (for example "*.md"); ids are
+    paths relative to the folder. Hidden files and anything outside the folder are skipped. Always local only."""
+    return tools.classify_files(Roster.from_env(), folder, pattern, labels, hint, descriptions)
+
+
+@mcp.tool()
+@guarded
+def tag_files(folder: str, pattern: str, labels: list[str], max_labels: int = 3, hint: str = "") -> dict:
+    """Like tag_batch, for up to 50 UTF-8 files in a folder matching a glob (for example "*.md"); ids are paths
+    relative to the folder. Hidden files and anything outside the folder are skipped. Always local only."""
+    return tools.tag_files(Roster.from_env(), folder, pattern, labels, max_labels, hint)
+
+
+@mcp.tool()
+@guarded
 def classify_file(path: str, labels: list[str], hint: str = "") -> dict:
     """Like classify, reading UTF-8 text from a local file (size-capped)."""
     cfg = Roster.from_env()

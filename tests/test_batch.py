@@ -136,3 +136,49 @@ def test_long_text_tags_are_ranked_across_chunks(fake, cfg):
     fake.dynamic = by_chunk({"alpha": T("travel"), "beta": T("garden", "cooking"), "gamma": T("cooking")})
     out = tools.tag_batch(cfg, [{"id": "a", "text": long}], LABELS, max_labels=2)
     assert out["results"][0] == {"id": "a", "labels": ["cooking", "travel"], "chunks": 3}
+
+
+# ---------- folder variant ----------
+def test_tag_files_reads_matching_files_with_relative_ids(fake, cfg, tmp_path):
+    (tmp_path / "a.md").write_text("Ferry to the island.")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.md").write_text("Soup with garden leeks.")
+    (tmp_path / "skip.txt").write_text("not matched")
+    (tmp_path / ".hidden.md").write_text("never read")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "c.md").write_text("never read")
+    (tmp_path / "bad.md").write_bytes(b"\xff\xfe not utf-8")
+    fake.replies += [T("travel"), T("cooking", "garden")]
+    out = tools.tag_files(cfg, str(tmp_path), "**/*.md", LABELS)
+    assert [r["id"] for r in out["results"]] == ["a.md", "bad.md", "sub/b.md"]
+    assert out["results"][0]["labels"] == ["travel"] and out["results"][1]["error"]["code"] == "MINION_BAD_INPUT"
+    assert out["results"][2]["labels"] == ["cooking", "garden"] and len(fake.requests) == 2
+
+
+def test_files_are_always_sensitive(fake, tmp_path):
+    (tmp_path / "a.md").write_text("x")
+    r = Roster.from_dict({"models": {"c": {"backend": "openai-compat", "base_url": fake.url, "model": "c",
+                                           "cloud": True, "key_env": KEY}}})
+    out = tools.classify_files(r, str(tmp_path), "*.md", LABELS)
+    assert out["results"][0]["error"]["code"] == "MINION_PRIVACY" and fake.requests == []
+
+
+def test_files_never_leave_the_folder(fake, cfg, tmp_path):
+    inside, outside = tmp_path / "in", tmp_path / "out"
+    inside.mkdir(), outside.mkdir()
+    (outside / "secret.md").write_text("outside")
+    (inside / "link.md").symlink_to(outside / "secret.md")
+    assert tools.classify_files(cfg, str(inside), "*.md", LABELS)["results"] == []
+    for pattern in ("../out/*.md", str(outside / "*.md"), " "):
+        with pytest.raises(BadInput):
+            tools.classify_files(cfg, str(inside), pattern, LABELS)
+    with pytest.raises(BadInput, match="not a folder"):
+        tools.classify_files(cfg, str(outside / "secret.md"), "*.md", LABELS)
+    assert fake.requests == []
+
+
+def test_files_batch_cap(cfg, tmp_path):
+    for i in range(tools.MAX_BATCH + 1):
+        (tmp_path / f"n{i}.md").write_text("x")
+    with pytest.raises(BadInput, match="more than"):
+        tools.tag_files(cfg, str(tmp_path), "*.md", LABELS)
