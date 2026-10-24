@@ -42,3 +42,25 @@ def repair(judge: Config, task: str, text: str, schema: dict, raw: str, error: s
             "Check it against the data and return the corrected result.\n\n"
             f"Required JSON schema: {json.dumps(schema)}\n\n{wrap_data(text)}")
     return reasoning.run(judge, SYSTEM, user, schema)
+
+
+def verify_grounding(judge: Config, task: str, text: str, verdicts: list, votes: dict) -> dict:
+    """Grounding check: the fast models disagreed on the verdict. Returns {check, verdict, quote}; the caller
+    still checks that the quote occurs in the source."""
+    schema = {"type": "object",
+              "properties": {"check": {"type": "string", "enum": ["confirm", "correct"]},
+                             "verdict": {"type": "string", "enum": list(verdicts)},
+                             "quote": {"type": "string"}},
+              "required": ["check", "verdict", "quote"], "additionalProperties": False}
+    cands = ", ".join(f"{v!r} ({n} vote{'s' if n != 1 else ''})" for v, n in votes.items()) or "none (all failed)"
+    user = (f"Task: {task}\n\nThe fast models proposed the verdicts: {cands}.\n"
+            "Decide whether one of the proposed verdicts is correct. Use check \"confirm\" and that verdict if so; "
+            "otherwise use check \"correct\" and give the right verdict. Put in quote the passage copied exactly "
+            "from the SOURCE that shows it (empty for unclear).\n\n"
+            f"Required JSON schema: {json.dumps(schema)}\n\n{wrap_data(text)}")
+
+    def check(obj):
+        if obj["check"] == "confirm" and votes and obj["verdict"] not in votes:
+            raise ValueError(f"check confirm but {obj['verdict']!r} is not one of the proposed verdicts")
+
+    return reasoning.run(judge, SYSTEM, user, schema, check)

@@ -13,10 +13,11 @@ DEFAULT_URLS = {"lmstudio": "http://127.0.0.1:1234/v1", "ollama": "http://127.0.
 BACKENDS = (*DEFAULT_URLS, "openai-compat", "systemone")   # openai-compat: any OpenAI-style endpoint, base_url required
 CONSTRAIN = ("json_schema", "json_object", "none")
 CORE_TOOLS = ("classify", "extract", "summarize")
-OPTIONAL_TOOLS = ("tag", "find_sensitive", "same")   # a roster without a model that serves them simply has no route
+OPTIONAL_TOOLS = ("tag", "find_sensitive", "same", "grounded")   # a roster without a model that serves them simply has no route
 TOOLS = CORE_TOOLS + OPTIONAL_TOOLS
 ASK = "ask"   # open questions: only models marked "knowledge" (they passed the hippo test) may serve it
-KINDS = ("fast", "reasoning", "decision")   # decision: System One model, classify only
+VOTING_TOOLS = ("classify", "grounded")   # several fast models vote (quorum), a decision model may vote or answer first
+KINDS = ("fast", "reasoning", "decision")   # decision: System One model, voting tools only
 DEFAULT_TIMEOUT = {"fast": 120.0, "reasoning": 600.0, "decision": 60.0}
 SYSTEMONE_URL = "https://api.typesafe.ai/v1"
 
@@ -112,7 +113,7 @@ class Config:
     def serves(self, tool: str) -> bool:
         if tool == ASK and not self.knowledge:
             return False
-        if self.kind == "decision" and tool != "classify":
+        if self.kind == "decision" and tool not in VOTING_TOOLS:
             return False
         return self.caps is None or tool in self.caps
 
@@ -263,8 +264,8 @@ class Roster:
                 raise BadConfig(f"route {tool!r}: entries in \"fast\" must have kind fast or decision")
             if any(not c.serves(tool) for c in fast):
                 raise BadConfig(f"route {tool!r}: a model in \"fast\" does not list {tool!r} in its caps")
-            if len(fast) > 1 and tool != "classify":
-                raise BadConfig(f"route {tool!r}: only classify supports more than one fast model")
+            if len(fast) > 1 and tool not in VOTING_TOOLS:
+                raise BadConfig(f"route {tool!r}: only {' and '.join(VOTING_TOOLS)} support more than one fast model")
             if tool == ASK and r.get("judge"):
                 raise BadConfig('route "ask": a judge does not apply')
             judge = ref(r["judge"], "judge", tool) if r.get("judge") else None
@@ -280,8 +281,9 @@ class Roster:
                 sc = r["shortcut"]
                 sm = ref(sc.get("model"), "shortcut", tool)
                 conf = sc.get("min_confidence")
-                if tool != "classify" or sm.kind != "decision" or not isinstance(conf, (int, float)) or not 0 < conf <= 1:
-                    raise BadConfig(f"route {tool!r}: shortcut needs a decision model and min_confidence in (0, 1], classify only")
+                if tool not in VOTING_TOOLS or sm.kind != "decision" or not isinstance(conf, (int, float)) or not 0 < conf <= 1:
+                    raise BadConfig(f"route {tool!r}: shortcut needs a decision model and min_confidence in (0, 1], "
+                                    f"{' or '.join(VOTING_TOOLS)} only")
                 shortcut = (sm, float(conf))
             quorum = int(r.get("quorum", len(fast) // 2 + 1))
             if not 1 <= quorum <= len(fast):

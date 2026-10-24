@@ -70,6 +70,12 @@ def items(model: Roster, name: str, quorum_only: bool = False):
                 ok = (not invented and all(w in out.lower() for w in s["must"]) and len(out.split()) <= s["max_words"] * 1.3)
                 return ok, out
             yield "summarize", f"s{i}", f
+    if m.serves("grounded"):
+        for i, g in enumerate(DATA.get("grounded", [])):
+            def f(g=g):
+                out = tools.grounded(model, g["claim"], g["source"], sensitive=SENS)
+                return out["verdict"] == g["expected"], out
+            yield f"grounded/{g['tag']}", f"g{i}", f
     if m.serves(ASK):
         for i, a in enumerate(DATA["ask"]):
             def f(a=a):

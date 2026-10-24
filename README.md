@@ -14,9 +14,10 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 | `tag(text, labels, max_labels=3, hint="")` | Zero or more of the given labels (at most `max_labels`). Returns `{"labels": [...]}`. |
 | `find_sensitive(text)` | Personal or secret-looking spans (names, emails, phones, ids, addresses, keys): patterns plus a model. Every span the model names must occur verbatim in the text, or the call fails. Returns `{"found", "spans": [{text, kind, by}]}`. |
 | `same(a, b, hint="")` | Do two texts state the same facts? `same`, `different` or `partly`, with a phrase quoted from one of the texts as evidence. |
+| `grounded(claim, source, hint="")` | Is the claim backed by the source? `supported`, `contradicted` or `unclear`, with a quote copied from the source. A verdict whose quote is not in the source becomes `unclear`. See [Grounding check](#grounding-check-grounded). |
 | `classify_file`, `extract_file`, `summarize_file` | Same, but reading UTF-8 text from a local file path. |
 
-`tag`, `find_sensitive` and `same` are served by any model whose `caps` allow them (all models by default). A roster whose models list explicit `caps` without them keeps working; calling the tool then says no model serves it.
+`tag`, `find_sensitive`, `same` and `grounded` are served by any model whose `caps` allow them (all models by default). A roster whose models list explicit `caps` without them keeps working; calling the tool then says no model serves it.
 
 ## How it behaves
 
@@ -87,7 +88,7 @@ Set `MINION_ROSTER` to inline JSON or a path to a JSON file to use several model
 ```
 
 - **`kind: fast`** models use constrained decoding (schema requested, then validated by us). **`kind: reasoning`** models are called without constrained decoding: they think freely, the think block is stripped, the last JSON object is extracted and validated against the schema by us, with one retry that feeds the error back.
-- **Quorum (classify only).** Every fast model in the route votes; a label wins with at least `quorum` votes (default: majority) and a strict lead.
+- **Quorum (classify and grounded).** Every fast model in the route votes; a label (or verdict) wins with at least `quorum` votes (default: majority) and a strict lead.
 - **Judge.** Runs only on disagreement or schema failure, never otherwise. It *verifies* the proposals (`confirm` one, or `correct` it) instead of redoing the task; on a schema failure it repairs the fast model's invalid output. With no judge configured, disagreement raises `MINION_NO_QUORUM` and a schema failure raises `MINION_SCHEMA`.
 - **Position-bias mitigation.** Small models are sensitive to label order (in testing, a 1B model labelled "I love this" as negative with `[positive, negative]` and correctly with the order flipped). With several fast models each gets the labels in a different rotation. With a single fast model and a judge, the model is asked twice, original and reversed order, and a mismatch counts as a disagreement. Control it per route with `"debias": true/false`; it never applies outside `classify`, and a single model with no judge stays a single call.
 - **Hard failures are never routed around.** `MINION_DOWN` and backend errors from any model propagate; the judge is not used to mask them.
@@ -142,12 +143,24 @@ A local LM Studio or Ollama roster entry with `"manage": true` (optional `contex
 
 ## Decision models (System One)
 
-A System One model answers a typed question about a text with a probability instead of generating text. A roster entry like TypeSafe's Jev (`"backend": "systemone", "kind": "decision"`, optionally `"cloud": true` with `key_env`) can serve `classify` only. It works in two ways:
+A System One model answers a typed question about a text with a probability instead of generating text. A roster entry like TypeSafe's Jev (`"backend": "systemone", "kind": "decision"`, optionally `"cloud": true` with `key_env`) can serve `classify` and the verdict of `grounded`. It works in two ways:
 
 - **As a voter:** list it in a classify route's `fast` models; its label is one vote.
-- **As a confident first line:** `"shortcut": {"model": "<name>", "min_confidence": 0.9}` on the classify route. If the decision model's confidence reaches the threshold, its label is returned alone and nothing else is called. Below it (or when it is rate limited or fails the schema check), the normal voters and judge run. With `MINION_META=1` the result shows whether the shortcut escalated.
+- **As a confident first line:** `"shortcut": {"model": "<name>", "min_confidence": 0.9}` on the classify (or grounded) route. If the decision model's confidence reaches the threshold, its label is returned alone and nothing else is called. Below it (or when it is rate limited or fails the schema check), the normal voters and judge run. With `MINION_META=1` the result shows whether the shortcut escalated.
 
 A cloud decision model is never used for sensitive calls, as for every cloud model. Confidence values are model-specific, so tune `min_confidence` on your own labelled data (see the eval harness) rather than copying a number. Request shape (a `choice` question with `criteria` over the labels) follows the public Jev examples; the label is checked in code like every other model's output.
+
+## Grounding check: `grounded`
+
+`grounded(claim, source)` checks one claim against one source text: a fact proposed from a note, or a sentence of a summary against the text it summarizes (it catches invented numbers, names and dates). It returns `{"verdict": "supported" | "contradicted" | "unclear", "quote": "..."}`, plus `confidence` (0 to 1) when a decision-model shortcut gave the verdict.
+
+- **The quote is checked in code.** A `supported` or `contradicted` verdict stands only if its quote occurs in the **source** (whitespace and letter case normalised, at least 3 characters). A quote taken from the claim, an invented passage or an empty quote downgrades the answer to `unclear`, with a `reason`. `unclear` always has an empty quote. A verdict outside the three values is `MINION_SCHEMA`, as everywhere.
+- **Routing like classify.** The route key is `grounded` and the `caps` name is `grounded`. Several fast models vote on the verdict with a quorum; the winning verdict keeps the quote of a model that voted for it. On disagreement the judge verifies the proposals and gives its own quote, which is checked like any other; with no judge, a missed quorum is `MINION_NO_QUORUM`.
+- **Decision models** (`backend: systemone`) answer the verdict as a pick-one question, as a voter or as a `shortcut`. They give no quote, so when they decide alone, the first generative fast model on the route is asked only for the quote; with none, the answer is `unclear`. The injection defence that strips instruction segments runs on `classify` only for now.
+
+```json
+"routes": {"grounded": {"fast": ["g1", "e4b"], "judge": "q9"}}
+```
 
 ## Defence against injections that name an answer
 
@@ -163,7 +176,7 @@ The report also has a `tokens` block: tokens handled locally and by cloud models
 
 ## Evaluating minions
 
-`evals/dataset_large.json` (generated by `evals/make_dataset.py`, fixed seed, 327 distinct invented classify items split into `dev` and `test` halves) is for tuning a confidence threshold on one half and checking it on the other. `evals/dataset.json` holds invented public test items with known answers (sentiment, topic and prompt-injection classification, field extraction, summaries checked for invented numbers, and general questions with and without a false premise). `scripts/eval.py` runs each roster model alone, and optionally the whole classify route as a quorum, then prints a table of correct answers, schema failures, rate limits and median latency. Rate limits are waited out and counted, never scored as wrong answers.
+`evals/dataset_large.json` (generated by `evals/make_dataset.py`, fixed seed, 327 distinct invented classify items split into `dev` and `test` halves) is for tuning a confidence threshold on one half and checking it on the other. `evals/dataset.json` holds invented public test items with known answers (sentiment, topic and prompt-injection classification, field extraction, summaries checked for invented numbers, grounding checks of claims against a source (with invented numbers and a quote that must come from the source), and general questions with and without a false premise). `scripts/eval.py` runs each roster model alone, and optionally the whole classify route as a quorum, then prints a table of correct answers, schema failures, rate limits and median latency. Rate limits are waited out and counted, never scored as wrong answers.
 
 ```bash
 MINION_ROSTER=my-roster.json uv run python scripts/eval.py --quorum --out results.json

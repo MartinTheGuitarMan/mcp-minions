@@ -44,6 +44,7 @@ def record(tool: str, sensitive: bool, started: float, text: str, meta: dict | N
            "shortcut_model": short.get("model"),
            "failover": meta.get("failover") or None, "rate_limited": meta.get("rate_limited") or None,
            "injection_removed": len(meta.get("injection_removed") or []) or None,
+           "downgraded": True if meta.get("downgraded") else None,
            "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens"),
            "cloud_prompt_tokens": usage.get("cloud_prompt_tokens") or None,
            "cloud_completion_tokens": usage.get("cloud_completion_tokens") or None,

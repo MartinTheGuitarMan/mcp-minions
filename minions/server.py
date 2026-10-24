@@ -73,6 +73,14 @@ def same(a: str, b: str, hint: str = "", sensitive: bool = True) -> dict:
 
 @mcp.tool()
 @guarded
+def grounded(claim: str, source: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Is the claim backed by the source? Returns verdict supported, contradicted or unclear, plus a quote copied
+    from the source. The quote is checked in code to occur in the source; a verdict without one becomes unclear."""
+    return tools.grounded(Roster.from_env(), claim, source, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
 def classify_file(path: str, labels: list[str], hint: str = "") -> dict:
     """Like classify, reading UTF-8 text from a local file (size-capped)."""
     cfg = Roster.from_env()

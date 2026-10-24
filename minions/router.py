@@ -1,4 +1,4 @@
-"""Per-tool routing: fast models (quorum for classify) -> judge only on disagreement or schema failure.
+"""Per-tool routing: fast models (quorum for classify and grounded) -> judge only on disagreement or schema failure.
 Hard failures (MINION_DOWN, backend errors) always propagate; the judge never papers over them."""
 from __future__ import annotations
 
@@ -8,8 +8,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 from . import decision, defend, engine, judge as judge_mod
-from .config import Roster
+from .config import VOTING_TOOLS, Roster
 from .errors import NoQuorum, PrivacyRefused, RateLimited, SchemaError
+
+
+VOTE_KEY = {"classify": "label", "grounded": "verdict"}   # the field the fast models vote on
+assert set(VOTE_KEY) == set(VOTING_TOOLS)
 
 
 def _rotate(labels: list, i: int) -> list:
@@ -35,14 +39,16 @@ def _gate(route, tool: str, sensitive: bool):
 
 def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | None = None,
         sensitive: bool = True, descriptions: dict | None = None) -> tuple[dict, dict]:
-    """build(order) -> (task, schema); order is a label ordering (classify only) or None.
-    sensitive=True (the default) keeps the call on local models."""
+    """build(order) -> (task, schema); order is a label ordering (voting tools only) or None.
+    sensitive=True (the default) keeps the call on local models. For a voting tool, labels are the values
+    voted on (the classify labels, or the grounded verdicts)."""
     route = _gate(roster.route(tool), tool, sensitive)
     task, schema = build(None)
 
     # Each run is (model, label order). Small models are position-biased, so label order is varied:
     # one rotation per model when there are several, or original + reversed when a single model has a judge.
-    if tool == "classify":
+    key = VOTE_KEY.get(tool)
+    if key:
         if len(route.fast) > 1:
             runs = [(m, _rotate(labels, i)) for i, m in enumerate(route.fast)]
         elif route.debias and len(labels) > 1:
@@ -55,7 +61,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     meta = {"tool": tool, "fast": [m.name for m, _ in runs], "judge": None, "votes": {}, "schema_failures": [],
             "debias": len(route.fast) == 1 and len(runs) == 2, "rate_limited": [], "failover": []}
 
-    if route.shortcut:   # screen the text first: instruction-like segments are dropped before anything classifies it
+    if route.shortcut and tool == "classify":   # screen the text first: instruction-like segments are dropped before anything classifies it
         text, removed = defend.strip(route.shortcut[0], text)
         if removed:
             meta["injection_removed"] = removed
@@ -66,7 +72,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
             meta["shortcut"] = {"model": sm.name, "confidence": conf, "escalated": conf is None or conf < threshold}
             if not meta["shortcut"]["escalated"]:
                 meta["fast"] = []   # nobody else was called
-                return {"label": label}, meta
+                return {key: label}, meta
         except RateLimited:
             meta["rate_limited"].append(sm.name)
         except SchemaError:
@@ -81,7 +87,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
         for cand in tried:
             try:
                 if cand.kind == "decision":
-                    out = {"label": decision.run(cand, t, text, order, descriptions)[0]}, None
+                    out = {key: decision.run(cand, t, text, order, descriptions)[0]}, None
                 else:
                     out = engine.run(cand, t, text, sch, name), None
             except SchemaError as e:
@@ -117,19 +123,26 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     failures = [(m, e) for m, r, e in outs if e is not None]
     meta["schema_failures"] += [m.name for m, e in failures if isinstance(e, SchemaError)]
 
-    if tool == "classify":
-        votes = Counter(r["label"] for _, r in valid)
+    if key:
+        votes = Counter(r[key] for _, r in valid)
         meta["votes"] = dict(votes)
         ranked = votes.most_common()
         if ranked and ranked[0][1] >= quorum and (len(ranked) == 1 or ranked[0][1] > ranked[1][1]):
-            return {"label": ranked[0][0]}, meta
+            if tool == "classify":
+                return {"label": ranked[0][0]}, meta
+            # a generative winner keeps its other fields (the quote); decision models give the verdict alone
+            return next((r for _, r in valid if r[key] == ranked[0][0] and len(r) > 1), {key: ranked[0][0]}), meta
         if route.judge is None:
             if not votes:
                 raise failures[0][1]   # every fast model failed (schema or rate limit): report that, not a quorum miss
             raise NoQuorum(f"no judge configured and fast models did not reach quorum {quorum}: "
                            f"votes={dict(votes)} schema_failures={meta['schema_failures']}")
-        out, _ = judge_mod.verify_classification(route.judge, task, text, labels, dict(votes))
         meta["judge"] = route.judge.name
+        if tool == "grounded":
+            out = judge_mod.verify_grounding(route.judge, task, text, labels, dict(votes))
+            meta["judge_verdict"] = out["check"]
+            return {"verdict": out["verdict"], "quote": out["quote"]}, meta
+        out, _ = judge_mod.verify_classification(route.judge, task, text, labels, dict(votes))
         meta["judge_verdict"] = out["verdict"]
         return {"label": out["label"]}, meta
 

@@ -823,6 +823,86 @@
    ]
   }
  ],
+ "grounded": [
+  {
+   "claim": "The park reopened on 3 May.",
+   "source": "The riverside park reopened on 3 May after a two-month renovation. It now has 40 benches, a new playground and a cafe that is open from 8 to 18.",
+   "expected": "supported",
+   "tag": "date"
+  },
+  {
+   "claim": "The park now has 45 benches.",
+   "source": "The riverside park reopened on 3 May after a two-month renovation. It now has 40 benches, a new playground and a cafe that is open from 8 to 18.",
+   "expected": "contradicted",
+   "tag": "number"
+  },
+  {
+   "claim": "The park cafe opens at 8.",
+   "source": "The riverside park reopened on 3 May after a two-month renovation. It now has 40 benches, a new playground and a cafe that is open from 8 to 18.",
+   "expected": "supported",
+   "tag": "number"
+  },
+  {
+   "claim": "The renovation cost two million crowns.",
+   "source": "The riverside park reopened on 3 May after a two-month renovation. It now has 40 benches, a new playground and a cafe that is open from 8 to 18.",
+   "expected": "unclear",
+   "tag": "missing"
+  },
+  {
+   "claim": "Version 2.4 adds a dark theme.",
+   "source": "Version 2.4 of the note app adds offline sync and a dark theme. Export to PDF was removed and will return in version 2.5.",
+   "expected": "supported",
+   "tag": "fact"
+  },
+  {
+   "claim": "Version 2.4 adds export to PDF.",
+   "source": "Version 2.4 of the note app adds offline sync and a dark theme. Export to PDF was removed and will return in version 2.5.",
+   "expected": "contradicted",
+   "tag": "fact"
+  },
+  {
+   "claim": "Version 2.5 will be released in March.",
+   "source": "Version 2.4 of the note app adds offline sync and a dark theme. Export to PDF was removed and will return in version 2.5.",
+   "expected": "unclear",
+   "tag": "missing"
+  },
+  {
+   "claim": "The choir rehearses on Wednesdays.",
+   "source": "The choir rehearses every Wednesday at 19:00 in the old school hall. New singers are welcome; there is no audition.",
+   "expected": "supported",
+   "tag": "date"
+  },
+  {
+   "claim": "New singers must pass an audition.",
+   "source": "The choir rehearses every Wednesday at 19:00 in the old school hall. New singers are welcome; there is no audition.",
+   "expected": "contradicted",
+   "tag": "fact"
+  },
+  {
+   "claim": "The choir rehearses at 18:00.",
+   "source": "The choir rehearses every Wednesday at 19:00 in the old school hall. New singers are welcome; there is no audition.",
+   "expected": "contradicted",
+   "tag": "number"
+  },
+  {
+   "claim": "The ferry carried 1,200 passengers on its first weekend.",
+   "source": "The harbour ferry carried 1,200 passengers on its first weekend. Tickets cost 30 crowns for adults and are free for children under 7.",
+   "expected": "supported",
+   "tag": "number"
+  },
+  {
+   "claim": "Children under 12 travel free on the ferry.",
+   "source": "The harbour ferry carried 1,200 passengers on its first weekend. Tickets cost 30 crowns for adults and are free for children under 7.",
+   "expected": "contradicted",
+   "tag": "number"
+  },
+  {
+   "claim": "The ferry runs every hour.",
+   "source": "The harbour ferry carried 1,200 passengers on its first weekend. Tickets cost 30 crowns for adults and are free for children under 7.",
+   "expected": "unclear",
+   "tag": "missing"
+  }
+ ],
  "ask": [
   {
    "q": "Summarize the 2019 paper that first described the spotted mountain hippo (Hippopotamus maculatus montanus), including the authors.",

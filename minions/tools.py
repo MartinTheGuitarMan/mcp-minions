@@ -8,7 +8,7 @@ import jsonschema
 
 import time
 
-from . import calllog, lifecycle, manage, ratelimit, router, tokens
+from . import calllog, engine, lifecycle, manage, ratelimit, router, tokens
 from .config import ASK, Roster
 from .errors import BadInput, MinionError, SchemaError
 
@@ -26,12 +26,15 @@ def read_text_file(cfg, path: str) -> str:
         raise BadInput(f"file is not valid UTF-8: {path}") from e
 
 
-def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=None) -> dict:
+def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=None, after=None) -> dict:
+    """after(out, meta) -> out: a check that runs inside the same log line and token tally as the call."""
     roster = Roster.coerce(cfg)
     started = time.time()
     tally = tokens.start()
     try:
         out, meta = router.run(roster, tool, build, text, name, labels, sensitive, descriptions)
+        if after is not None:
+            out = after(out, meta)
     except MinionError as e:
         calllog.record(tool, sensitive, started, text, None, e.code, tally.summary())
         raise
@@ -168,6 +171,78 @@ def same(cfg, a: str, b: str, hint: str = "", sensitive: bool = True) -> dict:
     if not ev or not any(_squash(ev) in _squash(t) for t in (a, b)):
         raise SchemaError("model gave no evidence that appears in either text", str(out)[:200])
     return {"verdict": out["verdict"], "evidence": ev}
+
+
+VERDICTS = ["supported", "contradicted", "unclear"]
+VERDICT_MEANINGS = {"supported": "The source states what the claim says, with the same numbers, names and dates.",
+                    "contradicted": "The source states something that conflicts with the claim.",
+                    "unclear": "The source does not say enough to support or contradict the claim."}
+MIN_QUOTE = 3   # a quote shorter than this (non-space characters) proves nothing
+
+
+def _quote_found(quote: str, source: str) -> bool:
+    q = _squash(quote)
+    return len(q.replace(" ", "")) >= MIN_QUOTE and q in _squash(source)
+
+
+def grounded(cfg, claim: str, source: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Is the claim supported by the source, contradicted, or unclear? A supported or contradicted verdict
+    stands only with a quote that occurs in the source (whitespace and case normalised); otherwise it is
+    downgraded to unclear. Decision models may vote on the verdict; they give no quote."""
+    _check_text(claim)
+    _check_text(source)
+    clean = lambda t: t.replace("=====", "== ==")
+    text = f"=====CLAIM=====\n{clean(claim)}\n=====SOURCE=====\n{clean(source)}"
+    meaning = "\n".join(f"- {v}: {d}" for v, d in VERDICT_MEANINGS.items())
+    intro = ("The data holds a CLAIM and a SOURCE. Check the claim against the SOURCE only, not against what you "
+             "know. Every number, name and date in the claim must match the source for supported.")
+
+    def build(order=None):
+        schema = {"type": "object", "properties": {"verdict": {"type": "string", "enum": list(order or VERDICTS)},
+                                                   "quote": {"type": "string"}},
+                  "required": ["verdict", "quote"], "additionalProperties": False}
+        return (f"{intro} Verdicts:\n{meaning}\nFor supported or contradicted, put in quote the shortest passage "
+                "copied exactly from the SOURCE that shows it; for unclear, leave quote empty."
+                + (f" {hint}" if hint else "")), schema
+
+    roster = _routed(cfg, "grounded")
+
+    def after(out, meta):
+        verdict = out["verdict"]
+        short = meta.get("shortcut") or {}
+        conf = {"confidence": short["confidence"]} if short and not short["escalated"] else {}
+        if verdict == "unclear":
+            return {"verdict": "unclear", "quote": "", **conf}
+        if "quote" in out:
+            quote = out["quote"].strip()
+        else:   # only decision models gave the verdict: a generative model on the route supplies the quote
+            quote = _fetch_quote(roster, text, intro, verdict, sensitive, meta)
+        if not _quote_found(quote, source):   # never trusted: a verdict without a real quote is not a verdict
+            meta["downgraded"] = verdict
+            return {"verdict": "unclear", "quote": "", "reason": f"no quote from the source backs {verdict!r}"
+                    + (f"; the model quoted {quote[:60]!r}" if quote else "")}
+        return {"verdict": verdict, "quote": quote, **conf}
+
+    return _go(roster, "grounded", build, text, "grounding", list(VERDICTS), sensitive, VERDICT_MEANINGS, after)
+
+
+def _fetch_quote(roster, text: str, intro: str, verdict: str, sensitive: bool, meta: dict) -> str:
+    """The quote for a verdict a decision model gave. No generative model on the route, or one that fails the
+    schema, gives an empty quote (so the verdict becomes unclear). Hard failures propagate."""
+    route = router._gate(roster.route("grounded"), "grounded", sensitive)
+    m = next((c for c in route.fast + route.fallback if c.kind != "decision"), None)
+    if m is None:
+        return ""
+    schema = {"type": "object", "properties": {"quote": {"type": "string"}}, "required": ["quote"],
+              "additionalProperties": False}
+    task = (f"{intro} The claim was judged {verdict}. Copy into quote the shortest passage from the SOURCE that "
+            "shows it, exactly as written. Leave quote empty if no passage shows it.")
+    meta["quote_by"] = m.name
+    try:
+        return engine.run(m, task, text, schema, "quote")["quote"].strip()
+    except SchemaError:
+        meta["schema_failures"].append(m.name)
+        return ""
 
 
 ASK_SCHEMA = {"type": "object",
