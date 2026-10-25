@@ -82,6 +82,12 @@ def classify(cfg, text: str, labels: list[str], hint: str = "", sensitive: bool 
              descriptions: dict | None = None) -> dict:
     _check_text(text)
     _check_classify_args(labels, descriptions)
+    build = classify_build(labels, hint, descriptions)
+    return _go(cfg, "classify", build, text, "classification", list(labels), sensitive, descriptions)
+
+
+def classify_build(labels: list[str], hint: str = "", descriptions: dict | None = None):
+    """build(order) -> (task, schema) for classify; build(None)[0] is the task a decision-model shortcut gets."""
     meaning = ("\nLabel meanings:\n" + "\n".join(f"- {l}: {d}" for l, d in descriptions.items())) if descriptions else ""
 
     def build(order=None):
@@ -90,7 +96,7 @@ def classify(cfg, text: str, labels: list[str], hint: str = "", sensitive: bool 
                   "required": ["label"], "additionalProperties": False}
         return f"Classify the data into exactly one of: {', '.join(order)}." + (f" {hint}" if hint else "") + meaning, schema
 
-    return _go(cfg, "classify", build, text, "classification", list(labels), sensitive, descriptions)
+    return build
 
 
 def extract(cfg, text: str, schema: dict, hint: str = "", sensitive: bool = True) -> dict:

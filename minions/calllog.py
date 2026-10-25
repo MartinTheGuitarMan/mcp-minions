@@ -1,7 +1,8 @@
 """Optional per-call log: one JSON line per tool call, so everyday use shows which models earn their keep.
 Set MINION_LOG to a file path to turn it on. It records tool, sensitivity, which models answered, whether the
-shortcut or judge ran, failovers, latency, the error code and the token counts the providers reported (summed over every
-model call of the tool call); never the text, the labels or the answer."""
+shortcut or judge ran, the shortcut's confidence and threshold, failovers, latency, the error code and the token
+counts the providers reported (summed over every model call of the tool call); never the text, the labels or the
+answer."""
 from __future__ import annotations
 
 import json
@@ -42,6 +43,8 @@ def record(tool: str, sensitive: bool, started: float, text: str, meta: dict | N
            "fast": meta.get("fast"), "judge": meta.get("judge"),
            "shortcut": (None if not short else ("answered" if not short.get("escalated") else "escalated")),
            "shortcut_model": short.get("model"),
+           "shortcut_confidence": round(short["confidence"], 4) if short.get("confidence") is not None else None,
+           "shortcut_threshold": short.get("threshold"),
            "failover": meta.get("failover") or None, "rate_limited": meta.get("rate_limited") or None,
            "injection_removed": len(meta.get("injection_removed") or []) or None,
            "downgraded": True if meta.get("downgraded") else None,
@@ -93,6 +96,29 @@ def _tokens(rows: list) -> dict:
                 "method": SAVING_METHOD}}
 
 
+def _confidence(rows: list) -> list | None:
+    """The shortcut's confidence per tool and model: spread, and how many calls reached the threshold (and were
+    answered alone). Lines from before confidence was logged, and calls where the model gave none, are counted apart."""
+    groups: dict = {}
+    for r in rows:
+        if r.get("shortcut") and r.get("shortcut_model"):
+            groups.setdefault((r["tool"], r["shortcut_model"]), []).append(r)
+    out = []
+    for (tool, model), rs in sorted(groups.items()):
+        conf = sorted(r["shortcut_confidence"] for r in rs if r.get("shortcut_confidence") is not None)
+        q = lambda p: conf[min(len(conf) - 1, int(len(conf) * p))] if conf else None
+        thresholds = sorted({r["shortcut_threshold"] for r in rs if r.get("shortcut_threshold") is not None})
+        out.append({"tool": tool, "model": model, "calls": len(rs), "without_confidence": len(rs) - len(conf),
+                    "min": conf[0] if conf else None, "p10": q(0.1), "p50": q(0.5), "p90": q(0.9),
+                    "max": conf[-1] if conf else None,
+                    "threshold": thresholds[0] if len(thresholds) == 1 else (thresholds or None),   # a list if it changed
+                    "reached_threshold": sum(1 for r in rs if r.get("shortcut_confidence") is not None
+                                             and r.get("shortcut_threshold") is not None
+                                             and r["shortcut_confidence"] >= r["shortcut_threshold"]),
+                    "answered": sum(1 for r in rs if r["shortcut"] == "answered")})
+    return out or None
+
+
 def report(days: float = 7.0) -> dict:
     p = _path()
     if p is None or not p.is_file():
@@ -121,6 +147,7 @@ def report(days: float = 7.0) -> dict:
             "errors": dict(Counter(r["error"] for r in rows if r.get("error"))),
             "latency_s": {"p50": pct(0.5), "p95": pct(0.95), "max": lat[-1] if lat else None},
             "shortcut": dict(short) or None,
+            "shortcut_confidence": _confidence(rows),
             "judge_calls": sum(1 for r in rows if r.get("judge")),
             "failovers": sum(1 for r in rows if r.get("failover")),
             # value-check failures of fast models that the judge then repaired (unrepaired ones are in errors)

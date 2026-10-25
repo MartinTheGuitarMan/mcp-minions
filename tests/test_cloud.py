@@ -383,3 +383,30 @@ def test_label_descriptions_reach_voters_and_decision_models(fake):
     assert fake.calls("d")[-1]["questions"]["label"]["criteria"] == {"positive": "praise or satisfaction", "negative": "complaint"}
     with pytest.raises(Exception, match="MINION_BAD_INPUT"):
         tools.classify(r, "x", LABELS, descriptions={"nope": "x"})
+
+
+def test_shortcut_confidence_is_logged_and_reported(fake, tmp_path, monkeypatch):
+    log = tmp_path / "calls.jsonl"
+    monkeypatch.setenv("MINION_LOG", str(log))
+    r = shortcut_roster(fake, threshold=0.95)
+    confs = [0.97, 0.91, 0.62, 0.88, 0.95]
+    fake.by_model.update(d=[jev("negative", c) for c in confs], l=[L("negative")] * 4)
+    for _ in confs:
+        tools.classify(r, "x", LABELS, sensitive=False)
+    rows = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [row["shortcut_confidence"] for row in rows] == confs
+    assert {row["shortcut_threshold"] for row in rows} == {0.95}
+    (rep,) = tools.report()["shortcut_confidence"]
+    assert rep == {"tool": "classify", "model": "d", "calls": 5, "without_confidence": 0, "min": 0.62, "p10": 0.62,
+                   "p50": 0.91, "p90": 0.97, "max": 0.97, "threshold": 0.95, "reached_threshold": 2, "answered": 2}
+
+
+def test_report_counts_shortcut_calls_without_a_confidence(fake, tmp_path, monkeypatch):
+    log = tmp_path / "calls.jsonl"
+    monkeypatch.setenv("MINION_LOG", str(log))
+    r = shortcut_roster(fake)
+    no_conf = (200, {"answers": {"label": {"type": "choice", "choice": "positive"}}})
+    fake.by_model.update(d=[no_conf], l=[L("positive")])
+    tools.classify(r, "x", LABELS, sensitive=False)
+    (rep,) = tools.report()["shortcut_confidence"]
+    assert rep["calls"] == 1 and rep["without_confidence"] == 1 and rep["p50"] is None and rep["reached_threshold"] == 0

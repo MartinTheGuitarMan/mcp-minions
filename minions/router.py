@@ -71,7 +71,8 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
         sm, threshold = route.shortcut
         try:
             label, conf = decision.run(sm, task, text, labels, descriptions)
-            meta["shortcut"] = {"model": sm.name, "confidence": conf, "escalated": conf is None or conf < threshold}
+            meta["shortcut"] = {"model": sm.name, "confidence": conf, "threshold": threshold,
+                                "escalated": conf is None or conf < threshold}
             if not meta["shortcut"]["escalated"]:
                 meta["fast"] = []   # nobody else was called
                 return {key: label}, meta

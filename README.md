@@ -152,7 +152,13 @@ A System One model answers a typed question about a text with a probability inst
 - **As a voter:** list it in a classify route's `fast` models; its label is one vote.
 - **As a confident first line:** `"shortcut": {"model": "<name>", "min_confidence": 0.9}` on the classify (or grounded) route. If the decision model's confidence reaches the threshold, its label is returned alone and nothing else is called. Below it (or when it is rate limited or fails the schema check), the normal voters and judge run. With `MINION_META=1` the result shows whether the shortcut escalated.
 
-A cloud decision model is never used for sensitive calls, as for every cloud model. Confidence values are model-specific, so tune `min_confidence` on your own labelled data (see the eval harness) rather than copying a number. Request shape (a `choice` question with `criteria` over the labels) follows the public Jev examples; the label is checked in code like every other model's output.
+A cloud decision model is never used for sensitive calls, as for every cloud model. Confidence values are model-specific, so tune `min_confidence` on your own labelled data rather than copying a number. A threshold set too high means the shortcut never answers alone and only adds a call. To see where it stands: the usage log records the shortcut's confidence and threshold on every call, `minion_report` shows their spread under `shortcut_confidence` (per tool and model: min, p10, p50, p90, max, how many calls reached the threshold, how many it answered alone), and `scripts/eval.py --confidence` prints confidence-versus-correct pairs on labelled items with a table of how many calls each threshold would answer alone and how many of those are right:
+
+```bash
+MINION_ROSTER=my-roster.json uv run python scripts/eval.py --confidence --data evals/dataset_large.json --split dev
+```
+
+Pick the threshold on `dev`, then check it on `test`. The eval asks the decision model directly with the classify task text; the injection defence that runs before a live shortcut is not applied. Request shape (a `choice` question with `criteria` over the labels) follows the public Jev examples; the label is checked in code like every other model's output.
 
 ## Grounding check: `grounded`
 
@@ -210,7 +216,7 @@ Measured with Jev as the decision model: 14 attack phrasings written separately 
 
 ## Usage log and report
 
-Set `MINION_LOG` to a file path and every tool call appends one JSON line: tool, whether it was sensitive, text length, latency, which models answered, shortcut or judge use, failovers, rate limits, the error code and the token counts the providers reported, summed over every model call of the tool call (voters, shortcut, judge; left out when a provider gives none; `cloud` marks a call in which a cloud model took part). It never stores the text, the labels or the answer. The `minion_report(days)` tool summarizes the log: calls per tool, p50/p95 latency, how often the shortcut answered, judge calls, failovers, errors, extract and summarize check failures a judge repaired, and which models answered.
+Set `MINION_LOG` to a file path and every tool call appends one JSON line: tool, whether it was sensitive, text length, latency, which models answered, shortcut or judge use (with the shortcut's confidence and threshold), failovers, rate limits, the error code and the token counts the providers reported, summed over every model call of the tool call (voters, shortcut, judge; left out when a provider gives none; `cloud` marks a call in which a cloud model took part). It never stores the text, the labels or the answer. The `minion_report(days)` tool summarizes the log: calls per tool, p50/p95 latency, how often the shortcut answered and the spread of its confidence, judge calls, failovers, errors, extract and summarize check failures a judge repaired, and which models answered.
 
 The report also has a `tokens` block: tokens handled locally and by cloud models (as the providers counted them; older log lines without counts are listed under `calls_without_token_counts`), and `estimated_kept_off_calling_model`. That figure is an **estimate, not a billing figure**. It counts only calls that succeeded, stayed on local models and did not fail over; errored, failed-over and cloud calls count zero. Input side: the logged text length divided by about 4 characters per token (the text the calling model did not have to process). Output side: the completion tokens the local models reported for those calls, quorum and judge calls included. The calling model still pays for passing the text in and reading the answer, so treat the number as an order of magnitude. The report repeats this method in its output.
 

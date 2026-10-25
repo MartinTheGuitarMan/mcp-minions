@@ -4,6 +4,10 @@ Each model is tried alone (sensitive=false, so cloud models are included) and, w
 classify route is tried together. Provider rate limits are waited out and counted, never scored as wrong answers.
 
 usage: MINION_ROSTER=<roster.json> eval.py [--models a,b] [--max-calls name=N ...] [--quorum] [--out FILE]
+       MINION_ROSTER=<roster.json> eval.py --confidence [--data evals/dataset_large.json --split dev] [--out FILE]
+--confidence asks each decision model (or those in --models) every classify item once, as a shortcut would,
+and prints confidence-versus-correct pairs plus, per threshold, how many calls would be answered alone and how
+many of those are right. Use it to tune min_confidence on one split and check it on the other.
 Cloud keys come from the environment. Nothing in the dataset is private.
 """
 import argparse
@@ -16,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from minions import tools  # noqa: E402
+from minions import decision, tools  # noqa: E402
 from minions.config import ASK, TOOLS, Roster, Route  # noqa: E402
 from minions.errors import MinionError, RateLimited, SchemaError  # noqa: E402
 
@@ -146,6 +150,47 @@ def run_model(roster: Roster, name: str, cap: int | None, quorum_only: bool = Fa
     return stats
 
 
+THRESHOLDS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99)
+
+
+def confidence_pairs(roster: Roster, name: str, items: list, cap: int | None) -> list:
+    """(confidence, correct, label, expected, id) for each classify item, as the shortcut sees it: the same task
+    text, no voters. The injection defence that runs before a shortcut is not applied here."""
+    m, pairs = roster.models[name], []
+    for i, c in enumerate(items[:cap]):
+        task = tools.classify_build(c["labels"])(None)[0]
+        for attempt in range(4):
+            try:
+                label, conf = decision.run(m, task, c["text"], c["labels"])
+                break
+            except RateLimited as e:
+                time.sleep(min(e.retry_after or 20, 65))
+            except MinionError as e:
+                label, conf = None, None
+                print(f"  {name} c{i}: {str(e)[:100]}", file=sys.stderr)
+                break
+        else:
+            continue
+        if label is not None:
+            pairs.append({"confidence": conf, "correct": label == c["expected"], "label": label,
+                          "expected": c["expected"], "id": f"c{i}"})
+    return pairs
+
+
+def print_confidence(name: str, pairs: list) -> None:
+    print(f"\n## {name}: {len(pairs)} answers, {sum(p['correct'] for p in pairs)} correct")
+    print("confidence\tcorrect\tlabel\texpected\tid")
+    for p in sorted(pairs, key=lambda p: (p["confidence"] is None, p["confidence"] or 0)):
+        conf = "-" if p["confidence"] is None else f"{p['confidence']:.4f}"
+        print(f"{conf}\t{int(p['correct'])}\t{p['label']}\t{p['expected']}\t{p['id']}")
+    print("\n| min_confidence | answered alone | of those correct | accuracy | escalated |")
+    print("|---|---|---|---|---|")
+    for t in THRESHOLDS:
+        alone = [p for p in pairs if p["confidence"] is not None and p["confidence"] >= t]
+        acc = f"{sum(p['correct'] for p in alone) / len(alone):.3f}" if alone else "-"
+        print(f"| {t} | {len(alone)} | {sum(p['correct'] for p in alone)} | {acc} | {len(pairs) - len(alone)} |")
+
+
 def cell(v):
     return f"{sum(v)}/{len(v)}" if v else "-"
 
@@ -156,6 +201,10 @@ def main():
     ap.add_argument("--quorum", action="store_true"), ap.add_argument("--only-quorum", action="store_true")
     ap.add_argument("--only", help="run only items whose task name contains this text, e.g. hard")
     ap.add_argument("--sensitive", action="store_true", help="mark every call sensitive (local models only)")
+    ap.add_argument("--confidence", action="store_true",
+                    help="print decision models' confidence-versus-correct pairs on the classify items")
+    ap.add_argument("--data", help="dataset file for --confidence (default evals/dataset.json)")
+    ap.add_argument("--split", help="only items with this split, e.g. dev or test (dataset_large.json)")
     ap.add_argument("--out")
     a = ap.parse_args()
     global SENS
@@ -163,6 +212,18 @@ def main():
     roster = Roster.from_env()
     names = a.models.split(",") if a.models else list(roster.models)
     caps = {k: int(v) for k, v in (x.split("=") for x in a.max_calls)}
+    if a.confidence:
+        data = json.loads(Path(a.data).read_text()) if a.data else DATA
+        cls = [c for c in data["classify"] if not a.split or c.get("split") == a.split]
+        names = [n for n in names if roster.models[n].kind == "decision"]
+        if not names:
+            sys.exit("no decision model in the roster (or in --models)")
+        out = {n: confidence_pairs(roster, n, cls, caps.get(n)) for n in names}
+        for n, pairs in out.items():
+            print_confidence(n, pairs)
+        if a.out:
+            Path(a.out).write_text(json.dumps(out, indent=1))
+        return
     results = []
     if not a.only_quorum:
         with ThreadPoolExecutor(len(names)) as ex:   # one thread per model; a model's own calls stay sequential
