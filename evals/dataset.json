@@ -957,6 +957,22 @@
    "must": [
     "ferry"
    ]
+  },
+  {
+   "text": "The Brannvik rowing club counted 1,249,800 SEK in its building fund on 14 May 2026. Chair Ilse Moreau said the boathouse roof will be replaced in August, and 37 members signed up to help.",
+   "max_words": 25,
+   "must": [
+    "roof"
+   ],
+   "note": "tempts rounding (about 1.25 million) and invented names; the content check rejects a number or name the text does not state"
+  },
+  {
+   "text": "Kestrel Valley school moved its sports day from Friday 12 June to Monday 15 June because of rain. Classes 4B and 5A will run the relay; parents are welcome from 9:30.",
+   "max_words": 20,
+   "must": [
+    "sports day"
+   ],
+   "note": "dates, class codes and a time: every one in the summary must come from the text"
   }
  ],
  "grounded": [

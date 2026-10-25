@@ -35,6 +35,16 @@ class NotInSource(SchemaError):
     code = "MINION_NOT_IN_SOURCE"
 
 
+class Invented(NotInSource):
+    """summarize: the summary names a number, date, or capitalised name or term that does not occur in the source."""
+    code = "MINION_INVENTED"
+
+
+class TooLong(SchemaError):
+    """summarize: the summary is longer than max_words allows (see values.word_limit)."""
+    code = "MINION_TOO_LONG"
+
+
 class NoQuorum(MinionError):
     code = "MINION_NO_QUORUM"
 

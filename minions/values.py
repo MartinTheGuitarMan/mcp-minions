@@ -7,7 +7,7 @@ import re
 import unicodedata
 from datetime import date
 
-from .errors import EmptyValue, NotInSource
+from .errors import EmptyValue, Invented, NotInSource, TooLong
 
 MONTHS = {m: i + 1 for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august",
                                           "september", "october", "november", "december"))}
@@ -139,5 +139,101 @@ def make_check(schema: dict, text: str):
                 raise bad[0](f"required field {field!r} {bad[1]}", str(obj)[:200])
             unverified.append(field)
         return unverified
+
+    return check
+
+
+# ---------- summarize: the facts in a summary must come from the source ----------
+
+# Capitalised words that are not names: they may open a clause after a colon or a dash, or be the pronoun "I".
+COMMON = frozenset("""i a an the and or but nor so yet of in on at to for with by from into about after before over
+under this that these those it its he she they we you his her their our there here then also overall however
+both all some many most more less no not one each every other such while although though because as if when
+mr mrs ms dr prof summary note key point points main brief briefly""".split())
+_OPEN = r"""['"“‘(\[]*"""
+_SENT_START = re.compile(rf"(?:^|[.!?:;]['\")\]”’]*\s+|\n\s*(?:[-*•]|\d+[.)])?\s*){_OPEN}$")
+_WORD_TOKEN = re.compile(r"(?<!\w)[^\W\d_][\w'’]*")   # a word, not the letters of a code like 4B
+_ENDING = re.compile(r"['’](?:s|m|re|ve|ll|d|t)?$", re.I)
+_SCALE = {"thousand": 1e3, "million": 1e6, "billion": 1e9}
+_SCALE_WORD = re.compile(r"\s*(thousand|million|billion)\b", re.I)
+
+
+def word_limit(max_words: int) -> int:
+    """The most words a summary may have: max_words plus 10% (at least 2 words), since models count loosely."""
+    return max_words + max(2, -(-max_words // 10))
+
+
+def _readings(token: str) -> tuple[set[float], list[float]]:
+    """(whole readings of a number token: grouped, or with the last separator as decimal point; its digit runs)."""
+    parts = re.split(r"[,.'\s ]", token)
+    whole = {float("".join(parts))}
+    if len(parts) > 1:
+        whole.add(float("".join(parts[:-1]) + "." + parts[-1]))
+    return whole, [float(p) for p in parts]
+
+
+def _number_ok(token: str, after: str, src: Source) -> bool:
+    """A number in the summary is found when a whole reading of it is in the source, or it has three or more parts
+    and every one is (a version or dotted date written another way), or it is scaled by a word the source spells
+    out ('1.2 million'). A plain decimal must match as a whole: 1.3 is not found from a 1 and a 3."""
+    whole, parts = _readings(token)
+    if any(src.has_number(v) for v in whole) or (len(parts) > 2 and all(src.has_number(p) for p in parts)):
+        return True
+    m = _SCALE_WORD.match(after)
+    return bool(m) and any(src.has_number(v * _SCALE[m.group(1).lower()]) for v in whole)
+
+
+def _word_ok(word: str, src: Source) -> bool:
+    """A capitalised word is found as a whole word after folding, without a plural or possessive ending, or
+    (for words over 4 letters) as the start of a source word sharing all but its last 3 letters (Sweden, Swedish)."""
+    f = _fold(word)
+    forms = {f, f[:-1]} if f.endswith("s") and len(f) > 3 else {f}
+    if any(f" {x} " in src.folded for x in forms):
+        return True
+    return len(f) > 4 and f" {f[:max(4, len(f) - 3)]}" in src.folded
+
+
+def _is_name(word: str, before: str) -> bool:
+    """Should this word be checked as a name or term? Capitalised and not a common word; at the start of a
+    sentence, a list item or a clause after a colon only if it is clearly a name (all capitals, or a capital
+    inside it: NASA, McKinley)."""
+    if not word[0].isupper() or word.casefold() in COMMON:
+        return False
+    if _SENT_START.search(before):
+        return len(word) > 1 and any(c.isupper() for c in word[1:])
+    return True
+
+
+def make_summary_check(text: str, max_words: int):
+    """check(obj) for summarize: raises EmptyValue for an empty summary, TooLong over word_limit(max_words), and
+    Invented when a number, date or capitalised name or term in the summary does not occur in the source.
+    Number words, lower-case words and sentence-initial words (unless all capitals) are not checked."""
+    src = Source(text)
+    for m in _NUM.finditer(text):   # '1.2 million' in the source also reads as 1200000
+        if sc := _SCALE_WORD.match(text, m.end()):
+            src.numbers |= {v * _SCALE[sc.group(1).lower()] for v in _readings(m.group(0))[0]}
+    limit = word_limit(max_words)
+
+    def check(obj: dict) -> list[str]:
+        summary = obj["summary"]
+        if not summary.strip():
+            raise EmptyValue("the summary is empty", str(obj)[:200])
+        n = len(summary.split())
+        if n > limit:
+            raise TooLong(f"the summary has {n} words; max_words is {max_words} (up to {limit} accepted)",
+                          str(obj)[:200])
+        rest = summary
+        for rx, _ in DATE_FORMS:   # a date the source has, in any simple form, is not checked token by token
+            rest = rx.sub(lambda m: " " * len(m.group(0)) if _dates(m.group(0), whole=True) & src.dates
+                          else m.group(0), rest)
+        missing = [m.group(0) for m in _NUM.finditer(rest) if not _number_ok(m.group(0), rest[m.end():], src)]
+        for m in _WORD_TOKEN.finditer(rest):
+            w = _ENDING.sub("", m.group(0))
+            if w and _is_name(w, rest[:m.start()]) and not _word_ok(w, src):
+                missing.append(w)
+        if missing:
+            shown = ", ".join(repr(t) for t in dict.fromkeys(missing))
+            raise Invented(f"the summary names what the source does not: {shown[:200]}", str(obj)[:200])
+        return []
 
     return check

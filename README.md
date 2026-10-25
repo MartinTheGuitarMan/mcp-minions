@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io) server that hands narrow, well-defined
 
 An optional roster adds more models, on this machine or others you reach over the network, with voting and a judge. It can also list hosted cloud models. Those are used only when the caller marks the text as public (`sensitive=false`); every call is private by default, and the `*_file` tools always stay local. With the `*_file` tools the calling model passes a path and never reads the text itself.
 
-The idea is "strong system, slim model": a small model is fine at reading and rewriting, so the server gives it one clear task, forces structured output, and **validates the result in code** before returning it. It does not trust the model to follow the format. How far the check goes depends on the tool: a label must be one of yours, extracted values and grounding quotes must occur in the source, but a summary is checked for shape only, not content.
+The idea is "strong system, slim model": a small model is fine at reading and rewriting, so the server gives it one clear task, forces structured output, and **validates the result in code** before returning it. It does not trust the model to follow the format. How far the check goes depends on the tool: a label must be one of yours; extracted values and grounding quotes must occur in the source; and every number, date and capitalised name in a summary must occur in the source too. The summary check is a net for invented details, not proof that a summary is fair or complete.
 
 ## Tools
 
@@ -12,7 +12,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 |---|---|
 | `classify(text, labels, hint="")` | Picks exactly one of the given labels (1 to 50, unique). Returns `{"label": ...}`. |
 | `extract(text, schema, hint="")` | Fills an object matching your JSON Schema (`"type": "object"`). Returns the object. Every value must occur in the text, or the call fails; see [Value check](#value-check-extract). |
-| `summarize(text, max_words=100)` | Summary in at most `max_words` words (5 to 1000). Returns `{"summary": ...}`. |
+| `summarize(text, max_words=100)` | Summary in at most `max_words` words (5 to 1000). Returns `{"summary": ...}`. Numbers, dates and capitalised names in it must occur in the text, or the call fails; see [Content check](#content-check-summarize). |
 | `tag(text, labels, max_labels=3, hint="")` | Zero or more of the given labels (at most `max_labels`). Returns `{"labels": [...]}`. |
 | `find_sensitive(text)` | Personal or secret-looking spans (names, emails, phones, ids, addresses, keys): patterns plus a model. Every span the model names must occur verbatim in the text, or the call fails. Returns `{"found", "spans": [{text, kind, by}]}`. |
 | `same(a, b, hint="")` | Do two texts state the same facts? `same`, `different` or `partly`, with a phrase quoted from one of the texts as evidence. |
@@ -28,7 +28,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 - **Schema first, then verify.** Each call asks the backend for schema-constrained JSON, and then checks the reply with `jsonschema`. Whether a backend actually enforces the schema varies, so a reply that is not valid JSON or does not match the schema is an error, not a guess.
 - **No silent fallback.** If the backend is down you get `MINION_DOWN`, also when it drops the connection mid-request (reset, or disconnected without a response); a timeout is `MINION_BACKEND_ERROR`. Nothing is retried on another model. The one exception is a rate limit on a route with a configured `fallback` (see cloud minions).
 - **Untrusted input.** Your text is wrapped in `<data>` tags, a closing `</data>` inside it is neutralised, and the system prompt tells the model never to follow instructions found in the data. This reduces prompt-injection risk. It is not a guarantee, which is why the output schema is checked in code.
-- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`, (managed models) `MINION_BUSY` and `MINION_LOAD_FAILED`, and (extract) `MINION_EMPTY` and `MINION_NOT_IN_SOURCE`, which are kinds of schema failure.
+- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`, (managed models) `MINION_BUSY` and `MINION_LOAD_FAILED`, (extract and summarize) `MINION_EMPTY` and `MINION_NOT_IN_SOURCE`, and (summarize) `MINION_INVENTED` (a kind of `MINION_NOT_IN_SOURCE`) and `MINION_TOO_LONG`. These four are kinds of schema failure.
 
 ## Install and run
 
@@ -178,6 +178,20 @@ A reply can match the schema and still say nothing: with vague field names a sma
 
 Both codes are `MINION_SCHEMA` subclasses, so they route like any schema failure: with a judge on the route, the judge repairs the answer and its repair must pass the same check (one retry with the reason fed back); without one, the error is returned. The privacy gate, quorum and failover rules are unchanged. The usage log records the kinds a judge repaired as `check_failures`, and `minion_report` counts them under `check_failures_repaired`; unrepaired ones show up in `errors`.
 
+## Content check: `summarize`
+
+A summary can be well-formed and still invent a figure, shift a date or add a name. So after the schema check, `summarize` (and `summarize_file`) checks the summary against the source text in code, with the same normalisation as extract's value check:
+
+- **Numbers** must occur in the source: as written, with or without grouping (`1,250,000` for `1250000`), with either decimal mark, or scaled by a word the source or summary spells out (`1.25 million` for `1,250,000`). A plain decimal must match as a whole (`1.3` is not found from a `1` and a `3`); a token of three or more parts (`1.2.3`, `3.11.2026`) also passes when every part occurs. A rounded, summed or converted number fails (`about 45%` for `44.6%`).
+- **Dates** in a simple form (`2026-11-03`, `3 November 2026`, `Nov 3, 2026`, `03/11/2026`) pass when the source has the same date in any of those forms. Otherwise their numbers and month name are checked one by one.
+- **Capitalised names and terms** (a word starting with a capital) must occur in the source as a whole word after folding case and accents, without a plural or possessive ending (`Okafor's`, `Okafors`), or share all but their last three letters with a source word, for words over four letters (`Swedish` for `Sweden`). Letters inside a code (`4B`) are not words; its digits are checked as a number.
+- **Not checked, to avoid false failures:** the first word of a sentence, a list item or a clause after a colon (unless it is all capitals or has a capital inside it, like `NASA` or `McKinley`), common words such as `The`, `Overall` or `I`, lower-case words, and number words (`three`).
+- **Length:** at most `max_words` plus 10 % (at least 2 words), counting whitespace-separated words, since models count loosely. A longer summary is `MINION_TOO_LONG`; an empty one is `MINION_EMPTY`.
+
+A failing summary is `MINION_INVENTED`, listing the tokens not found. All of these are `MINION_SCHEMA` subclasses, so they route like extract's checks: with a judge on the route, the judge repairs the summary and its repair must pass the same check (one retry); without one, the error is returned. The usage log records the kinds a judge repaired as `check_failures`.
+
+**Limits.** Each token is checked alone, so a wrong pairing of facts that each occur (`March 2026` when the source has `March` and `2026` separately, or names swapped between roles) is not caught, and neither is a false statement in lower-case words (`rose` for `fell`). Use `grounded` per sentence for that. Sentence-initial names are skipped, so an invented name that opens a sentence passes unless it is all capitals or appears again later. English month names and number words only.
+
 ## Batches: `classify_batch` and `tag_batch`
 
 Both take `items`, a list of 1 to 50 objects `{"id": "<unique string>", "text": "..."}`, plus the same arguments as `classify` or `tag` (labels and the other arguments are checked once, before any item). They return `{"results": [...], "ok": n, "failed": m}` with one entry per id, in input order: `{"id", "label"}` or `{"id", "labels"}` on success, `{"id", "error": {"code", "message"}}` on failure.
@@ -196,7 +210,7 @@ Measured with Jev as the decision model: 14 attack phrasings written separately 
 
 ## Usage log and report
 
-Set `MINION_LOG` to a file path and every tool call appends one JSON line: tool, whether it was sensitive, text length, latency, which models answered, shortcut or judge use, failovers, rate limits, the error code and the token counts the providers reported, summed over every model call of the tool call (voters, shortcut, judge; left out when a provider gives none; `cloud` marks a call in which a cloud model took part). It never stores the text, the labels or the answer. The `minion_report(days)` tool summarizes the log: calls per tool, p50/p95 latency, how often the shortcut answered, judge calls, failovers, errors, extract value-check failures a judge repaired, and which models answered.
+Set `MINION_LOG` to a file path and every tool call appends one JSON line: tool, whether it was sensitive, text length, latency, which models answered, shortcut or judge use, failovers, rate limits, the error code and the token counts the providers reported, summed over every model call of the tool call (voters, shortcut, judge; left out when a provider gives none; `cloud` marks a call in which a cloud model took part). It never stores the text, the labels or the answer. The `minion_report(days)` tool summarizes the log: calls per tool, p50/p95 latency, how often the shortcut answered, judge calls, failovers, errors, extract and summarize check failures a judge repaired, and which models answered.
 
 The report also has a `tokens` block: tokens handled locally and by cloud models (as the providers counted them; older log lines without counts are listed under `calls_without_token_counts`), and `estimated_kept_off_calling_model`. That figure is an **estimate, not a billing figure**. It counts only calls that succeeded, stayed on local models and did not fail over; errored, failed-over and cloud calls count zero. Input side: the logged text length divided by about 4 characters per token (the text the calling model did not have to process). Output side: the completion tokens the local models reported for those calls, quorum and judge calls included. The calling model still pays for passing the text in and reading the answer, so treat the number as an order of magnitude. The report repeats this method in its output.
 

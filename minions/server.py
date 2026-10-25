@@ -45,7 +45,9 @@ def extract(text: str, schema: dict, hint: str = "", sensitive: bool = True) -> 
 @mcp.tool()
 @guarded
 def summarize(text: str, max_words: int = 100, sensitive: bool = True) -> dict:
-    """Summarize text in at most max_words words. sensitive=false (public text only) allows cloud minions."""
+    """Summarize text in at most max_words words. Numbers, dates and capitalised names in the summary must occur in
+    the text (MINION_INVENTED) and it must keep to max_words plus 10% (MINION_TOO_LONG). sensitive=false (public text
+    only) allows cloud minions."""
     return tools.summarize(Roster.from_env(), text, max_words, sensitive)
 
 
@@ -133,7 +135,7 @@ def extract_file(path: str, schema: dict, hint: str = "") -> dict:
 @mcp.tool()
 @guarded
 def summarize_file(path: str, max_words: int = 100) -> dict:
-    """Like summarize, reading UTF-8 text from a local file (size-capped)."""
+    """Like summarize (with the same content check), reading UTF-8 text from a local file (size-capped)."""
     cfg = Roster.from_env()
     return tools.summarize(cfg, tools.read_text_file(cfg, path), max_words)
 
@@ -172,7 +174,7 @@ def minion_unload(name: str) -> dict:
 @mcp.tool()
 @guarded
 def minion_report(days: float = 7.0) -> dict:
-    """Usage summary from the call log: calls per tool, latency, shortcut answers, judge calls, failovers, errors, repaired extract value-check failures, tokens handled locally or by cloud, and an
+    """Usage summary from the call log: calls per tool, latency, shortcut answers, judge calls, failovers, errors, repaired extract and summarize check failures, tokens handled locally or by cloud, and an
     estimate (not a billing figure) of tokens kept off the calling model."""
     return tools.report(days)
 

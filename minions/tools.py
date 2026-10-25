@@ -119,8 +119,10 @@ def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> d
         raise BadInput("max_words must be between 5 and 1000")
     schema = {"type": "object", "properties": {"summary": {"type": "string"}},
               "required": ["summary"], "additionalProperties": False}
-    task = f"Summarize the data in at most {max_words} words."
-    return _go(cfg, "summarize", lambda order=None: (task, schema), text, "summary", None, sensitive)
+    task = (f"Summarize the data in at most {max_words} words. Use only numbers, dates and names that the data "
+            "states, written as the data writes them.")
+    return _go(cfg, "summarize", lambda order=None: (task, schema), text, "summary", None, sensitive,
+               check=values.make_summary_check(text, max_words))
 
 
 def tag(cfg, text: str, labels: list[str], max_labels: int = 3, hint: str = "", sensitive: bool = True) -> dict:
