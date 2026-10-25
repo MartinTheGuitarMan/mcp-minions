@@ -20,7 +20,8 @@ def wrap_data(text: str) -> str:
     return "<data>\n" + text.replace("</data>", "<\\/data>") + "\n</data>"
 
 
-def run(cfg: Config, task: str, text: str, schema: dict, name: str = "result") -> dict:
+def run(cfg: Config, task: str, text: str, schema: dict, name: str = "result", check=None) -> dict:
+    """check(obj), if given, may raise a SchemaError for a reply that is schema-valid but still wrong."""
     messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": f"{task}\n\n{wrap_data(text)}"}]
     raw = backends.complete(cfg, messages, schema, name)
     try:
@@ -31,4 +32,10 @@ def run(cfg: Config, task: str, text: str, schema: dict, name: str = "result") -
         jsonschema.validate(obj, schema)
     except jsonschema.ValidationError as e:
         raise SchemaError(f"{cfg.name}: model output violates schema: {e.message}; output={raw[:200]!r}", raw) from e
+    if check is not None:
+        try:
+            check(obj)
+        except SchemaError as e:
+            e.raw = raw
+            raise
     return obj

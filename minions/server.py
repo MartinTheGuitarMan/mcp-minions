@@ -36,8 +36,9 @@ def classify(text: str, labels: list[str], hint: str = "", sensitive: bool = Tru
 @mcp.tool()
 @guarded
 def extract(text: str, schema: dict, hint: str = "", sensitive: bool = True) -> dict:
-    """Extract fields from text into an object matching a JSON Schema (type: object). sensitive=false
-    (public text only) allows cloud minions."""
+    """Extract fields from text into an object matching a JSON Schema (type: object). Required values must be
+    non-empty and occur in the text (MINION_EMPTY, MINION_NOT_IN_SOURCE); optional values not found are listed in
+    _unverified. sensitive=false (public text only) allows cloud minions."""
     return tools.extract(Roster.from_env(), text, schema, hint, sensitive)
 
 
@@ -171,7 +172,7 @@ def minion_unload(name: str) -> dict:
 @mcp.tool()
 @guarded
 def minion_report(days: float = 7.0) -> dict:
-    """Usage summary from the call log: calls per tool, latency, shortcut answers, judge calls, failovers, errors, tokens handled locally or by cloud, and an
+    """Usage summary from the call log: calls per tool, latency, shortcut answers, judge calls, failovers, errors, repaired extract value-check failures, tokens handled locally or by cloud, and an
     estimate (not a billing figure) of tokens kept off the calling model."""
     return tools.report(days)
 

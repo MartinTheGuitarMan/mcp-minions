@@ -38,8 +38,10 @@ def _gate(route, tool: str, sensitive: bool):
 
 
 def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | None = None,
-        sensitive: bool = True, descriptions: dict | None = None) -> tuple[dict, dict]:
+        sensitive: bool = True, descriptions: dict | None = None, check=None) -> tuple[dict, dict]:
     """build(order) -> (task, schema); order is a label ordering (voting tools only) or None.
+    check(obj) may raise a SchemaError for a schema-valid reply (extract's value check); the fast model's answer
+    then counts as a schema failure and the judge's repair must pass it too.
     sensitive=True (the default) keeps the call on local models. For a voting tool, labels are the values
     voted on (the classify labels, or the grounded verdicts)."""
     route = _gate(roster.route(tool), tool, sensitive)
@@ -89,7 +91,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
                 if cand.kind == "decision":
                     out = {key: decision.run(cand, t, text, order, descriptions)[0]}, None
                 else:
-                    out = engine.run(cand, t, text, sch, name), None
+                    out = engine.run(cand, t, text, sch, name, check), None
             except SchemaError as e:
                 out = None, e
             except RateLimited as e:
@@ -122,6 +124,9 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     valid = [(m, r) for m, r, e in outs if r is not None]
     failures = [(m, e) for m, r, e in outs if e is not None]
     meta["schema_failures"] += [m.name for m, e in failures if isinstance(e, SchemaError)]
+    kinds = [e.code for _, e in failures if isinstance(e, SchemaError) and e.code != SchemaError.code]
+    if kinds:
+        meta["check_failures"] = kinds   # the value-check kinds (MINION_EMPTY, ...), so the report can count them
 
     if key:
         votes = Counter(r[key] for _, r in valid)
@@ -152,4 +157,4 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     if isinstance(first, RateLimited) or route.judge is None:   # the judge repairs bad output, not a missing answer
         raise first
     meta["judge"] = route.judge.name
-    return judge_mod.repair(route.judge, task, text, schema, first.raw, str(first)), meta
+    return judge_mod.repair(route.judge, task, text, schema, first.raw, str(first), check), meta

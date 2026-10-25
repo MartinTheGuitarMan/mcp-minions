@@ -25,6 +25,16 @@ class SchemaError(MinionError):
         self.raw = raw  # the model's unparsed output, kept so a judge can repair it
 
 
+class EmptyValue(SchemaError):
+    """extract: a required field came back empty (or 0 with no 0 in the source). Schema-valid, but no answer."""
+    code = "MINION_EMPTY"
+
+
+class NotInSource(SchemaError):
+    """extract: a required field holds a value that does not occur in the source text."""
+    code = "MINION_NOT_IN_SOURCE"
+
+
 class NoQuorum(MinionError):
     code = "MINION_NO_QUORUM"
 

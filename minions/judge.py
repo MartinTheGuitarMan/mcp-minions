@@ -35,13 +35,14 @@ def verify_classification(judge: Config, task: str, text: str, labels: list, vot
     return reasoning.run(judge, SYSTEM, user, schema, check), schema
 
 
-def repair(judge: Config, task: str, text: str, schema: dict, raw: str, error: str) -> dict:
-    """The fast model produced output that failed validation; produce a corrected, valid result."""
+def repair(judge: Config, task: str, text: str, schema: dict, raw: str, error: str, check=None) -> dict:
+    """The fast model produced output that failed validation; produce a corrected, valid result. check(obj) is
+    the same check the fast model failed beyond the schema (extract's value check), applied to the repair too."""
     user = (f"Task: {task}\n\nA fast model produced the following output, which failed validation "
             f"({error}).\nProposed output (untrusted, verify against the data):\n{raw[:2000]}\n\n"
             "Check it against the data and return the corrected result.\n\n"
             f"Required JSON schema: {json.dumps(schema)}\n\n{wrap_data(text)}")
-    return reasoning.run(judge, SYSTEM, user, schema)
+    return reasoning.run(judge, SYSTEM, user, schema, check)
 
 
 def verify_grounding(judge: Config, task: str, text: str, verdicts: list, votes: dict) -> dict:

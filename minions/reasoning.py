@@ -52,10 +52,12 @@ def extract_json(text: str) -> dict:
 
 
 def run(cfg: Config, system: str, user: str, schema: dict, validator=None) -> dict:
-    """validator(obj) may raise ValueError for semantic checks beyond the schema."""
+    """validator(obj) may raise ValueError, or a SchemaError subclass whose code the final error then keeps,
+    for semantic checks beyond the schema."""
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     last, budget, truncated = "unknown", cfg.max_tokens or DEFAULT_MAX_TOKENS, False
     for attempt in (1, 2):
+        kind = SchemaError
         if truncated:
             budget = min(budget * 2, MAX_TOKENS_CAP)   # one retry with a bigger budget
         raw, finish = backends.complete_ex(cfg, messages, None, max_tokens=budget)
@@ -76,6 +78,9 @@ def run(cfg: Config, system: str, user: str, schema: dict, validator=None) -> di
                     validator(obj)
                 except ValueError as e:
                     raise Invalid(str(e)) from e
+                except SchemaError as e:
+                    kind = type(e)
+                    raise Invalid(str(e)) from e
             return obj
         except Invalid as e:
             last = str(e)
@@ -86,4 +91,4 @@ def run(cfg: Config, system: str, user: str, schema: dict, validator=None) -> di
                 {"role": "user", "content": f"Your reply was rejected: {last}. Reply again with only the "
                                             f"corrected JSON object matching the schema.{hint}"},
             ]
-    raise SchemaError(f"{cfg.name}: reasoning model failed validation after one retry: {last}")
+    raise kind(f"{cfg.name}: reasoning model failed validation after one retry: {last}")

@@ -100,7 +100,7 @@ def test_schema_failure_of_fast_model_triggers_judge_repair(fake):
 def test_valid_fast_answer_never_reaches_judge(fake):
     schema = {"type": "object", "properties": {"age": {"type": "integer"}}, "required": ["age"]}
     fake.by_model.update(f1=['{"age": 40}'])
-    assert tools.extract(roster(fake), "x", schema) == {"age": 40}
+    assert tools.extract(roster(fake), "He is 40", schema) == {"age": 40}
     assert fake.calls("j") == []
 
 

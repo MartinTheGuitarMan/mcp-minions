@@ -45,6 +45,7 @@ def record(tool: str, sensitive: bool, started: float, text: str, meta: dict | N
            "failover": meta.get("failover") or None, "rate_limited": meta.get("rate_limited") or None,
            "injection_removed": len(meta.get("injection_removed") or []) or None,
            "downgraded": True if meta.get("downgraded") else None,
+           "check_failures": meta.get("check_failures"),
            "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens"),
            "cloud_prompt_tokens": usage.get("cloud_prompt_tokens") or None,
            "cloud_completion_tokens": usage.get("cloud_completion_tokens") or None,
@@ -122,6 +123,8 @@ def report(days: float = 7.0) -> dict:
             "shortcut": dict(short) or None,
             "judge_calls": sum(1 for r in rows if r.get("judge")),
             "failovers": sum(1 for r in rows if r.get("failover")),
+            # value-check failures of fast models that the judge then repaired (unrepaired ones are in errors)
+            "check_failures_repaired": dict(Counter(c for r in rows for c in r.get("check_failures") or [])),
             "rate_limited": sum(1 for r in rows if r.get("rate_limited")),
             "injection_segments_removed": sum(r.get("injection_removed") or 0 for r in rows),
             "tokens": _tokens(rows),

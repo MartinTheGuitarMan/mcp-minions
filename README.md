@@ -9,7 +9,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 | Tool | What it does |
 |---|---|
 | `classify(text, labels, hint="")` | Picks exactly one of the given labels (1 to 50, unique). Returns `{"label": ...}`. |
-| `extract(text, schema, hint="")` | Fills an object matching your JSON Schema (`"type": "object"`). Returns the object. |
+| `extract(text, schema, hint="")` | Fills an object matching your JSON Schema (`"type": "object"`). Returns the object. Every value must occur in the text, or the call fails; see [Value check](#value-check-extract). |
 | `summarize(text, max_words=100)` | Summary in at most `max_words` words (5 to 1000). Returns `{"summary": ...}`. |
 | `tag(text, labels, max_labels=3, hint="")` | Zero or more of the given labels (at most `max_labels`). Returns `{"labels": [...]}`. |
 | `find_sensitive(text)` | Personal or secret-looking spans (names, emails, phones, ids, addresses, keys): patterns plus a model. Every span the model names must occur verbatim in the text, or the call fails. Returns `{"found", "spans": [{text, kind, by}]}`. |
@@ -26,7 +26,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 - **Schema first, then verify.** Each call asks the backend for schema-constrained JSON, and then checks the reply with `jsonschema`. Whether a backend actually enforces the schema varies, so a reply that is not valid JSON or does not match the schema is an error, not a guess.
 - **No silent fallback.** If the backend is down you get `MINION_DOWN`. Nothing is retried on another model. The one exception is a rate limit on a route with a configured `fallback` (see cloud minions).
 - **Untrusted input.** Your text is wrapped in `<data>` tags, a closing `</data>` inside it is neutralised, and the system prompt tells the model never to follow instructions found in the data. This reduces prompt-injection risk. It is not a guarantee, which is why the output schema is checked in code.
-- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`, and (managed models) `MINION_BUSY` and `MINION_LOAD_FAILED`.
+- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`, (managed models) `MINION_BUSY` and `MINION_LOAD_FAILED`, and (extract) `MINION_EMPTY` and `MINION_NOT_IN_SOURCE`, which are kinds of schema failure.
 
 ## Install and run
 
@@ -164,6 +164,18 @@ A cloud decision model is never used for sensitive calls, as for every cloud mod
 "routes": {"grounded": {"fast": ["g1", "e4b"], "judge": "q9"}}
 ```
 
+## Value check: `extract`
+
+A reply can match the schema and still say nothing: with vague field names a small model may return `{"order": "", "date": "", "city": "", "boxes": 0}` for a text that states all four. So after the schema check, `extract` (and `extract_file`) checks the values against the source text in code:
+
+- **Required strings must not be empty.** An empty or whitespace-only value is `MINION_EMPTY`.
+- **Values must occur in the source.** A string must appear as whole words after folding case, accents, whitespace and punctuation (`"MALMO"` matches `Malmö,`; `"Lund"` does not match `Lundby`). A date also matches the same date in another simple form (`2026-11-03`, `3 November 2026`, `Nov 3, 2026`, `03/11/2026`; English month names, d/m and m/d both accepted). A number must appear as digits in the source, with or without grouping (`1,250.50`, `1.250,50`, `12 400`), or as an English number word up to ninety-nine. A computed value (a sum, a converted unit) is therefore not found. A required value that is not found is `MINION_NOT_IN_SOURCE`.
+- **A required number that is 0** passes when the source has a 0 in it; otherwise it is treated as a placeholder and is `MINION_EMPTY`. If "none" is a real answer for your data, make the field optional or nullable.
+- **Optional fields are flagged, not failed.** Missing or empty is fine (not stated). A value not found in the source is kept and its field is listed in `"_unverified": [...]` on the result.
+- **Not checked:** booleans, `null`, fields with `enum` or `const`, and nested objects. Only top-level properties are checked, plus the strings and numbers inside a top-level array. For a field the model should infer rather than copy (a category, a mood), use an `enum` or make it optional.
+
+Both codes are `MINION_SCHEMA` subclasses, so they route like any schema failure: with a judge on the route, the judge repairs the answer and its repair must pass the same check (one retry with the reason fed back); without one, the error is returned. The privacy gate, quorum and failover rules are unchanged. The usage log records the kinds a judge repaired as `check_failures`, and `minion_report` counts them under `check_failures_repaired`; unrepaired ones show up in `errors`.
+
 ## Batches: `classify_batch` and `tag_batch`
 
 Both take `items`, a list of 1 to 50 objects `{"id": "<unique string>", "text": "..."}`, plus the same arguments as `classify` or `tag` (labels and the other arguments are checked once, before any item). They return `{"results": [...], "ok": n, "failed": m}` with one entry per id, in input order: `{"id", "label"}` or `{"id", "labels"}` on success, `{"id", "error": {"code", "message"}}` on failure.
@@ -182,13 +194,13 @@ Measured with Jev as the decision model: 14 attack phrasings written separately 
 
 ## Usage log and report
 
-Set `MINION_LOG` to a file path and every tool call appends one JSON line: tool, whether it was sensitive, text length, latency, which models answered, shortcut or judge use, failovers, rate limits, the error code and the token counts the providers reported, summed over every model call of the tool call (voters, shortcut, judge; left out when a provider gives none; `cloud` marks a call in which a cloud model took part). It never stores the text, the labels or the answer. The `minion_report(days)` tool summarizes the log: calls per tool, p50/p95 latency, how often the shortcut answered, judge calls, failovers, errors and which models answered.
+Set `MINION_LOG` to a file path and every tool call appends one JSON line: tool, whether it was sensitive, text length, latency, which models answered, shortcut or judge use, failovers, rate limits, the error code and the token counts the providers reported, summed over every model call of the tool call (voters, shortcut, judge; left out when a provider gives none; `cloud` marks a call in which a cloud model took part). It never stores the text, the labels or the answer. The `minion_report(days)` tool summarizes the log: calls per tool, p50/p95 latency, how often the shortcut answered, judge calls, failovers, errors, extract value-check failures a judge repaired, and which models answered.
 
 The report also has a `tokens` block: tokens handled locally and by cloud models (as the providers counted them; older log lines without counts are listed under `calls_without_token_counts`), and `estimated_kept_off_calling_model`. That figure is an **estimate, not a billing figure**. It counts only calls that succeeded, stayed on local models and did not fail over; errored, failed-over and cloud calls count zero. Input side: the logged text length divided by about 4 characters per token (the text the calling model did not have to process). Output side: the completion tokens the local models reported for those calls, quorum and judge calls included. The calling model still pays for passing the text in and reading the answer, so treat the number as an order of magnitude. The report repeats this method in its output.
 
 ## Evaluating minions
 
-`evals/dataset_large.json` (generated by `evals/make_dataset.py`, fixed seed, 327 distinct invented classify items split into `dev` and `test` halves) is for tuning a confidence threshold on one half and checking it on the other. `evals/dataset.json` holds invented public test items with known answers (sentiment, topic and prompt-injection classification, field extraction, summaries checked for invented numbers, grounding checks of claims against a source (with invented numbers and a quote that must come from the source), short notes for `tag_batch` (labels that must and must not be chosen), and general questions with and without a false premise). `scripts/eval.py` runs each roster model alone, and optionally the whole classify route as a quorum, then prints a table of correct answers, schema failures, rate limits and median latency. Rate limits are waited out and counted, never scored as wrong answers.
+`evals/dataset_large.json` (generated by `evals/make_dataset.py`, fixed seed, 327 distinct invented classify items split into `dev` and `test` halves) is for tuning a confidence threshold on one half and checking it on the other. `evals/dataset.json` holds invented public test items with known answers (sentiment, topic and prompt-injection classification, field extraction (including a required field the text does not state, where the only right outcome is `MINION_EMPTY` or `MINION_NOT_IN_SOURCE`), summaries checked for invented numbers, grounding checks of claims against a source (with invented numbers and a quote that must come from the source), short notes for `tag_batch` (labels that must and must not be chosen), and general questions with and without a false premise). `scripts/eval.py` runs each roster model alone, and optionally the whole classify route as a quorum, then prints a table of correct answers, schema failures, rate limits and median latency. Rate limits are waited out and counted, never scored as wrong answers.
 
 ```bash
 MINION_ROSTER=my-roster.json uv run python scripts/eval.py --quorum --out results.json

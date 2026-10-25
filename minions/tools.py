@@ -9,7 +9,7 @@ import jsonschema
 
 import time
 
-from . import calllog, engine, lifecycle, manage, ratelimit, router, tokens
+from . import calllog, engine, lifecycle, manage, ratelimit, router, tokens, values
 from .config import ASK, Roster
 from .errors import BadConfig, BadInput, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
@@ -27,13 +27,14 @@ def read_text_file(cfg, path: str) -> str:
         raise BadInput(f"file is not valid UTF-8: {path}") from e
 
 
-def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=None, after=None) -> dict:
-    """after(out, meta) -> out: a check that runs inside the same log line and token tally as the call."""
+def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=None, after=None, check=None) -> dict:
+    """after(out, meta) -> out: a check that runs inside the same log line and token tally as the call.
+    check(obj): a per-reply check the router treats as part of the schema (see router.run)."""
     roster = Roster.coerce(cfg)
     started = time.time()
     tally = tokens.start()
     try:
-        out, meta = router.run(roster, tool, build, text, name, labels, sensitive, descriptions)
+        out, meta = router.run(roster, tool, build, text, name, labels, sensitive, descriptions, check)
         if after is not None:
             out = after(out, meta)
     except MinionError as e:
@@ -100,8 +101,16 @@ def extract(cfg, text: str, schema: dict, hint: str = "", sensitive: bool = True
         jsonschema.Draft202012Validator.check_schema(schema)
     except jsonschema.SchemaError as e:
         raise BadInput(f"invalid JSON Schema: {e.message}") from e
-    task = "Extract the requested fields from the data. Use only what the data states." + (f" {hint}" if hint else "")
-    return _go(cfg, "extract", lambda order=None: (task, schema), text, "extraction", None, sensitive)
+    task = ("Extract the requested fields from the data. Use only what the data states, and copy each value as "
+            "the data writes it." + (f" {hint}" if hint else ""))
+    check = values.make_check(schema, text)
+
+    def after(out, meta):   # required fields were checked per reply; optional ones not found are flagged here
+        unverified = check(out)
+        return {**out, "_unverified": unverified} if unverified else out
+
+    return _go(cfg, "extract", lambda order=None: (task, schema), text, "extraction", None, sensitive, after=after,
+               check=check)
 
 
 def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> dict:
