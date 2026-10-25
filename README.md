@@ -26,7 +26,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 ## How it behaves
 
 - **Schema first, then verify.** Each call asks the backend for schema-constrained JSON, and then checks the reply with `jsonschema`. Whether a backend actually enforces the schema varies, so a reply that is not valid JSON or does not match the schema is an error, not a guess.
-- **No silent fallback.** If the backend is down you get `MINION_DOWN`. Nothing is retried on another model. The one exception is a rate limit on a route with a configured `fallback` (see cloud minions).
+- **No silent fallback.** If the backend is down you get `MINION_DOWN`, also when it drops the connection mid-request (reset, or disconnected without a response); a timeout is `MINION_BACKEND_ERROR`. Nothing is retried on another model. The one exception is a rate limit on a route with a configured `fallback` (see cloud minions).
 - **Untrusted input.** Your text is wrapped in `<data>` tags, a closing `</data>` inside it is neutralised, and the system prompt tells the model never to follow instructions found in the data. This reduces prompt-injection risk. It is not a guarantee, which is why the output schema is checked in code.
 - **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`, (managed models) `MINION_BUSY` and `MINION_LOAD_FAILED`, and (extract) `MINION_EMPTY` and `MINION_NOT_IN_SOURCE`, which are kinds of schema failure.
 

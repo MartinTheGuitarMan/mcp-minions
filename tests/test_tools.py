@@ -70,6 +70,53 @@ def test_backend_down_raises_minion_down_and_no_fallback():
         tools.classify(cfg, "x", ["a", "b"])
 
 
+def _hang_up_server():
+    """A server that accepts the request and closes the connection without answering."""
+    import threading
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen()
+
+    def serve():
+        while True:
+            try:
+                c, _ = s.accept()
+            except OSError:
+                return
+            c.recv(65536)
+            c.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return s
+
+
+def test_dropped_connection_is_minion_down():
+    s = _hang_up_server()
+    try:
+        cfg = Config(backend="lmstudio", base_url=f"http://127.0.0.1:{s.getsockname()[1]}/v1", model="m", timeout=2)
+        with pytest.raises(MinionDown, match="^MINION_DOWN.*dropped the connection"):
+            tools.classify(cfg, "x", ["a", "b"])
+    finally:
+        s.close()
+
+
+def test_dropped_connection_is_not_routed_around(fake):
+    from minions.config import Roster
+    s = _hang_up_server()
+    try:
+        models = {"gone": {"backend": "lmstudio", "base_url": f"http://127.0.0.1:{s.getsockname()[1]}/v1",
+                           "model": "g", "timeout": 2},
+                  "spare": {"backend": "lmstudio", "base_url": fake.url, "model": "spare"},
+                  "j": {"backend": "lmstudio", "base_url": fake.url, "model": "j", "kind": "reasoning"}}
+        r = Roster.from_dict({"models": models, "routes": {
+            "summarize": {"fast": ["gone"], "judge": "j", "fallback": ["spare"]}}})
+        with pytest.raises(MinionDown):
+            tools.summarize(r, "Some text to summarize.")
+        assert fake.requests == []   # neither the fallback nor the judge was asked
+    finally:
+        s.close()
+
+
 def test_http_error_is_backend_error(fake, cfg):
     fake.replies.append((404, {"error": "model not found"}))
     with pytest.raises(BackendError, match="404"):

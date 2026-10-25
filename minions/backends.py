@@ -54,6 +54,10 @@ def _post_once(cfg: Config, url: str, payload: dict, headers: dict) -> httpx.Res
         raise MinionDown(f"{cfg.backend} backend not reachable at {url} ({e.__class__.__name__})") from e
     except httpx.TimeoutException as e:
         raise BackendError(f"{cfg.backend}/{cfg.model} timed out after {cfg.timeout}s") from e
+    except (httpx.NetworkError, httpx.RemoteProtocolError) as e:
+        # the connection was dropped mid-request (reset, or "Server disconnected without sending a response"):
+        # the server went away, so this is an outage, not a bad reply
+        raise MinionDown(f"{cfg.backend} backend dropped the connection at {url} ({e.__class__.__name__}: {e})") from e
     except httpx.HTTPError as e:
         raise BackendError(f"{cfg.backend} transport error: {e}") from e
 
