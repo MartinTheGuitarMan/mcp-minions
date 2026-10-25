@@ -1,8 +1,10 @@
 # mcp-minions
 
-An [MCP](https://modelcontextprotocol.io) server that hands narrow, well-defined jobs to a **small local model** instead of a big one: classify text, extract fields into a JSON Schema, and summarize. The model runs on your own machine through [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai), so the text never leaves it.
+An [MCP](https://modelcontextprotocol.io) server that hands narrow, well-defined jobs to **small models** instead of a big one: classify text, extract fields into a JSON Schema, check a claim against a source, tag, and summarize. By default the model runs on your own machine through [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai), so the text never leaves it.
 
-The idea is "strong system, slim model": a small model is fine at reading and rewriting, so the server gives it one clear task, forces structured output, and **validates the result in code** before returning it. It does not trust the model to follow the format.
+An optional roster adds more models, on this machine or others you reach over the network, with voting and a judge. It can also list hosted cloud models. Those are used only when the caller marks the text as public (`sensitive=false`); every call is private by default, and the `*_file` tools always stay local. With the `*_file` tools the calling model passes a path and never reads the text itself.
+
+The idea is "strong system, slim model": a small model is fine at reading and rewriting, so the server gives it one clear task, forces structured output, and **validates the result in code** before returning it. It does not trust the model to follow the format. How far the check goes depends on the tool: a label must be one of yours, extracted values and grounding quotes must occur in the source, but a summary is checked for shape only, not content.
 
 ## Tools
 
