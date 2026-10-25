@@ -57,7 +57,14 @@ def items(model: Roster, name: str, quorum_only: bool = False):
     if m.serves("extract"):
         for i, e in enumerate(DATA["extract"]):
             def f(e=e):
-                out = tools.extract(model, e["text"], e["schema"], sensitive=SENS)
+                try:
+                    out = tools.extract(model, e["text"], e["schema"], sensitive=SENS)
+                except SchemaError as x:
+                    if "expected_error" in e:   # the right answer is a clear error, not a guessed value
+                        return x.code in e["expected_error"], x.code
+                    raise
+                if "expected_error" in e:
+                    return False, out
                 ok = all(norm(out.get(k)) == norm(v) if not isinstance(v, float) else abs(float(out.get(k, 1e9)) - v) < 1e-6
                          for k, v in e["expected"].items())
                 return ok, out

@@ -783,6 +783,142 @@
     "person": "Priya Nair",
     "date": "2026-12-02"
    }
+  },
+  {
+   "text": "Order 7340 leaves on 2027-02-18 for Uppsala, 5 pallets.",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "order": {
+      "type": "string"
+     },
+     "date": {
+      "type": "string"
+     },
+     "town": {
+      "type": "string"
+     },
+     "pallets": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "order",
+     "date",
+     "town",
+     "pallets"
+    ],
+    "additionalProperties": false
+   },
+   "expected": {
+    "order": "7340",
+    "date": "2027-02-18",
+    "town": "Uppsala",
+    "pallets": 5
+   },
+   "note": "short, vague field names: a model that answers all-empty must fail with MINION_EMPTY, not pass"
+  },
+  {
+   "text": "The Riverside Book Fair opens on 9 May 2027 in Örebro.",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "event": {
+      "type": "string"
+     },
+     "date": {
+      "type": "string"
+     },
+     "city": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "event",
+     "date",
+     "city"
+    ],
+    "additionalProperties": false
+   },
+   "expected": {
+    "event": "Riverside Book Fair",
+    "city": "Örebro"
+   },
+   "note": "date written in words: any form of the same date passes the value check, so it is not scored"
+  },
+  {
+   "text": "The ferry Solvik carries 1 850 passengers and 240 cars.",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "vessel": {
+      "type": "string"
+     },
+     "passengers": {
+      "type": "integer"
+     },
+     "cars": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "vessel",
+     "passengers",
+     "cars"
+    ],
+    "additionalProperties": false
+   },
+   "expected": {
+    "vessel": "Solvik",
+    "passengers": 1850,
+    "cars": 240
+   }
+  },
+  {
+   "text": "Ticket 4410 was opened by the night shift.",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "ticket": {
+      "type": "string"
+     },
+     "priority": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "ticket"
+    ],
+    "additionalProperties": false
+   },
+   "expected": {
+    "ticket": "4410"
+   },
+   "note": "optional field not stated: leaving it out or empty passes; an invented value is flagged in _unverified"
+  },
+  {
+   "text": "Parcel 2093 left the depot this morning.",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "parcel": {
+      "type": "string"
+     },
+     "weight_kg": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "parcel",
+     "weight_kg"
+    ],
+    "additionalProperties": false
+   },
+   "expected_error": [
+    "MINION_EMPTY",
+    "MINION_NOT_IN_SOURCE"
+   ],
+   "note": "a required field the text does not state: the right outcome is a clear error, never a guessed weight"
   }
  ],
  "summarize": [
