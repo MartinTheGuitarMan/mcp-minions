@@ -68,6 +68,16 @@ def find_sensitive(text: str, sensitive: bool = True) -> dict:
 
 @mcp.tool()
 @guarded
+def scan_diff(folder: str, range: str, chunk_chars: int = 3000) -> dict:
+    """find_sensitive over what a git commit range adds, before a push: the added lines of the diff and the commit
+    messages. folder is a git work tree; range is "BASE..HEAD" (for example "origin/main..HEAD") or one base ref.
+    Returns findings per chunk with file:line; a failing chunk is reported with its error and pattern hits, the rest
+    still run. complete is false if any chunk failed or a binary file was skipped. Always local only."""
+    return tools.scan_diff(Roster.from_env(), folder, range, chunk_chars)
+
+
+@mcp.tool()
+@guarded
 def same(a: str, b: str, hint: str = "", sensitive: bool = True) -> dict:
     """Do two texts state the same facts? Returns verdict same, different or partly, plus a phrase quoted from
     one of the texts that shows the difference."""

@@ -9,7 +9,7 @@ import jsonschema
 
 import time
 
-from . import calllog, engine, lifecycle, manage, ratelimit, router, tokens, values
+from . import calllog, engine, gitdiff, lifecycle, manage, ratelimit, router, tokens, values
 from .config import ASK, Roster
 from .errors import BadConfig, BadInput, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
@@ -316,6 +316,10 @@ SENSITIVE_RULES = (("email", re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")),
                    ("id", re.compile(r"(?<!\d)\d{9,}(?!\d)")))
 
 
+def _rule_spans(text: str) -> dict:
+    return {(m.group(0), kind): "rule" for kind, rx in SENSITIVE_RULES for m in rx.finditer(text)}
+
+
 def find_sensitive(cfg, text: str, sensitive: bool = True) -> dict:
     """Spans of personal or secret-looking data, for screening text before it leaves the machine. Patterns plus a
     model; every span the model names must occur verbatim in the text or the call fails."""
@@ -328,12 +332,79 @@ def find_sensitive(cfg, text: str, sensitive: bool = True) -> dict:
             "List nothing that is not in the data.")
     cfg = _routed(cfg, "find_sensitive")
     out = _go(cfg, "find_sensitive", lambda order=None: (task, schema), text, "spans", None, sensitive)
-    spans = {(m.group(0), kind): "rule" for kind, rx in SENSITIVE_RULES for m in rx.finditer(text)}
+    spans = _rule_spans(text)
     for s in out["spans"]:
         if s["text"] not in text:
             raise SchemaError(f"model named a span that is not in the text: {s['text'][:60]!r}", str(out)[:200])
         spans.setdefault((s["text"], s["kind"]), "model")
     return {"found": bool(spans), "spans": [{"text": t, "kind": k, "by": by} for (t, k), by in spans.items()]}
+
+
+SCAN_CHUNK_CHARS = 3000    # about 750 tokens: short enough that a small model's list of spans stays valid JSON
+SCAN_MAX_CHARS = 300_000   # added text plus messages; a bigger range is refused, never cut short
+
+
+def _scan_chunks(units: list, size: int) -> list[list]:
+    """Pack units' lines into chunks of at most size characters, as lists of (label, line, text); a longer
+    line is cut into pieces."""
+    out, cur, n = [], [], 0
+    for u in units:
+        for line, text in u.lines:
+            pieces = [text[i:i + size] for i in range(0, len(text), size)] or [""]
+            for piece in pieces:
+                if cur and n + len(piece) + 1 > size:
+                    out.append(cur)
+                    cur, n = [], 0
+                cur.append((u.label, line, piece))
+                n += len(piece) + 1
+    if cur:
+        out.append(cur)
+    return [c for c in out if any(t.strip() for _, _, t in c)]
+
+
+def _where(span: str, chunk: list) -> str | None:
+    first = span.split("\n", 1)[0]
+    for label, line, text in chunk:
+        if first in text:
+            return f"{label}:{line}" if line is not None else label
+    return None
+
+
+def scan_diff(cfg, folder: str, range: str, chunk_chars: int = SCAN_CHUNK_CHARS) -> dict:
+    """find_sensitive over what a commit range adds: the added lines of `git diff merge-base..head` and the commit
+    messages of base..head, in chunks. Always local only. A chunk that fails is reported with its error (and any
+    pattern hits), and the others still run; after MINION_DOWN or another stop the rest are marked not attempted."""
+    if not isinstance(chunk_chars, int) or not 500 <= chunk_chars <= CHUNK_CHARS:
+        raise BadInput(f"chunk_chars must be an integer between 500 and {CHUNK_CHARS}")
+    roster = _routed(cfg, "find_sensitive")
+    router._gate(roster.route("find_sensitive"), "find_sensitive", True)   # no local model: refuse before reading
+    rng = gitdiff.read_range(folder, range)
+    total = sum(len(t) + 1 for u in rng.files + rng.messages for _, t in u.lines)
+    if total > SCAN_MAX_CHARS:
+        raise BadInput(f"the range adds {total} characters (limit {SCAN_MAX_CHARS}); scan a narrower range")
+    chunks_ = [(f"diff-{i}", c) for i, c in enumerate(_scan_chunks(rng.files, chunk_chars), 1)]
+    chunks_ += [(f"msg-{i}", c) for i, c in enumerate(_scan_chunks(rng.messages, chunk_chars), 1)]
+    results, stop = [], None
+    for cid, chunk in chunks_:
+        text = "\n".join(t for _, _, t in chunk)
+        row = {"id": cid, "from": list(dict.fromkeys(label for label, _, _ in chunk))}
+        try:
+            if stop is not None:
+                raise stop
+            out = find_sensitive(roster, text, True)
+            row.update(found=out["found"], spans=[{**s, "where": _where(s["text"], chunk)} for s in out["spans"]])
+        except MinionError as e:
+            # the model's answer is lost, but the patterns need no model: report what they see
+            rules = [{"text": t, "kind": k, "by": by, "where": _where(t, chunk)} for (t, k), by in _rule_spans(text).items()]
+            row.update(error=_error(e, "not attempted: " if e is stop else ""), spans=rules, found=bool(rules))
+            if stop is None and isinstance(e, BATCH_STOP):
+                stop = e
+        results.append(row)
+    failed = sum("error" in r for r in results)
+    return {"range": range, "base": rng.base[:12], "head": rng.head[:12], "merge_base": rng.merge_base[:12],
+            "commits": rng.commits, "files": len(rng.files), "skipped": rng.skipped,
+            "found": any(r["found"] for r in results), "chunks": results, "ok": len(results) - failed,
+            "failed": failed, "complete": failed == 0 and not rng.skipped}
 
 
 SAME_SCHEMA = {"type": "object", "properties": {"verdict": {"type": "string", "enum": ["same", "different", "partly"]},

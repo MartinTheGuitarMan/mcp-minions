@@ -15,6 +15,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 | `summarize(text, max_words=100)` | Summary in at most `max_words` words (5 to 1000). Returns `{"summary": ...}`. Numbers, dates and capitalised names in it must occur in the text, or the call fails; see [Content check](#content-check-summarize). |
 | `tag(text, labels, max_labels=3, hint="")` | Zero or more of the given labels (at most `max_labels`). Returns `{"labels": [...]}`. |
 | `find_sensitive(text)` | Personal or secret-looking spans (names, emails, phones, ids, addresses, keys): patterns plus a model. Every span the model names must occur verbatim in the text, or the call fails. Returns `{"found", "spans": [{text, kind, by}]}`. |
+| `scan_diff(folder, range, chunk_chars=3000)` | `find_sensitive` over what a git commit range adds (added lines and commit messages), in chunks, before a push. Findings per chunk with `file:line`; a failing chunk does not fail the scan. Always local only. See [Diff scan](#diff-scan-scan_diff). |
 | `same(a, b, hint="")` | Do two texts state the same facts? `same`, `different` or `partly`, with a phrase quoted from one of the texts as evidence. |
 | `grounded(claim, source, hint="")` | Is the claim backed by the source? `supported`, `contradicted` or `unclear`, with a quote copied from the source. A verdict whose quote is not in the source becomes `unclear`. See [Grounding check](#grounding-check-grounded). |
 | `classify_batch(items, labels, ...)`, `tag_batch(items, labels, max_labels=3, ...)` | `classify` or `tag` for up to 50 items `[{"id", "text"}]`, one result per id; a failing item does not fail the batch. See [Batches](#batches-classify_batch-and-tag_batch). |
@@ -198,6 +199,24 @@ A failing summary is `MINION_INVENTED`, listing the tokens not found. All of the
 
 **Limits.** Each token is checked alone, so a wrong pairing of facts that each occur (`March 2026` when the source has `March` and `2026` separately, or names swapped between roles) is not caught, and neither is a false statement in lower-case words (`rose` for `fell`). Use `grounded` per sentence for that. Sentence-initial names are skipped, so an invented name that opens a sentence passes unless it is all capitals or appears again later. English month names and number words only.
 
+## Diff scan: `scan_diff`
+
+`scan_diff(folder, range)` screens what a push would publish. `folder` is a git work tree; `range` is `BASE..HEAD` (for example `origin/main..HEAD`) or a single base ref, meaning `BASE..HEAD`. It scans:
+
+- the **added lines** of `git diff` from the merge base of the two refs to the head (removed and context lines are not scanned), and
+- the **commit messages** of `BASE..HEAD`.
+
+The text is split into chunks of about `chunk_chars` characters (default 3,000, 500 to 8,000; a small model's list of spans is more often valid JSON on short chunks), and `find_sensitive` runs on each, local models only. It returns `{"chunks": [...], "ok", "failed", "found", "complete", "skipped", "commits", "files", "base", "head", "merge_base"}`. Each chunk has an `id` (`diff-1`, ..., `msg-1`, ...), `from` (the files or commits in it), and `spans` with `text`, `kind`, `by` (`rule` or `model`) and `where` (`path:line` or `commit <id>`).
+
+- **One bad chunk does not fail the scan.** A chunk whose model answer is not valid JSON, fails the schema or names a span that is not in the text gets `error: {code, message}`; its pattern hits (emails, keys, phone numbers, long ids, which need no model) are still reported in `spans`. The other chunks still run. After `MINION_DOWN`, `MINION_RATE_LIMITED`, `MINION_PRIVACY` or `MINION_BAD_CONFIG` the remaining chunks are marked `not attempted` instead of hammering the same failure.
+- **`complete` is true only** when every chunk was scanned and no file was skipped. Read `failed` and `skipped` before trusting a clean result.
+- **Binary and non-UTF-8 files** are not decoded or scanned; they are listed in `skipped` with the reason.
+- **Size caps.** The raw diff is capped at 4 MB, the text to scan at 300,000 characters and the range at 500 commits. A bigger range is refused with `MINION_BAD_INPUT`, never silently cut; scan it in parts.
+- **Refs are checked before git sees them.** Each side of the range must be letters, digits and `._/~^@{}+-`, at most 200 characters, not starting with `-` or `.`, with no `..` inside, no spaces and no `:` (so `HEAD:file` and options like `--output=...` are refused). `A...B` is refused. Each ref must then resolve to a commit (`git rev-parse --verify --end-of-options REF^{commit}`), and only the resulting commit ids are passed to `git diff` and `git log`.
+- **How git runs.** From a fixed argument list, never through a shell, with `GIT_*` environment variables removed (so `GIT_DIR` cannot point it at another repository), system config ignored, `core.fsmonitor` off, and `--no-ext-diff --no-textconv` so a repository's own config cannot run a diff helper.
+
+A `find_sensitive` route is required (any model with that capability); every chunk is one `find_sensitive` line in the usage log. A clean scan is a second pair of eyes, not a guarantee: a small model misses things, and patterns only catch what they describe.
+
 ## Batches: `classify_batch` and `tag_batch`
 
 Both take `items`, a list of 1 to 50 objects `{"id": "<unique string>", "text": "..."}`, plus the same arguments as `classify` or `tag` (labels and the other arguments are checked once, before any item). They return `{"results": [...], "ok": n, "failed": m}` with one entry per id, in input order: `{"id", "label"}` or `{"id", "labels"}` on success, `{"id", "error": {"code", "message"}}` on failure.
@@ -232,7 +251,7 @@ Scoring is deliberately simple (exact label, field containment, a refusal patter
 
 ## Security note
 
-The `*_file` tools read **any UTF-8 text file** the caller names (up to the size cap), and `classify_files` and `tag_files` read up to 50 such files from any folder the caller names. Whoever can call this server can therefore read files your user account can read. Only connect clients you trust, and leave the file tools out of any setup where that is a problem.
+The `*_file` tools read **any UTF-8 text file** the caller names (up to the size cap), and `classify_files` and `tag_files` read up to 50 such files from any folder the caller names. Whoever can call this server can therefore read files your user account can read. `scan_diff` widens this read surface further: it reads the added lines and commit messages of any git work tree your account can read, through `git` (see [Diff scan](#diff-scan-scan_diff) for the checks on refs and how git is run). Only connect clients you trust, and leave the file tools and `scan_diff` out of any setup where that is a problem.
 
 ## Tests
 
