@@ -9,7 +9,17 @@ from dataclasses import replace
 
 from . import decision, defend, engine, judge as judge_mod
 from .config import VOTING_TOOLS, Roster
-from .errors import NoQuorum, PrivacyRefused, RateLimited, SchemaError
+from .errors import Busy, NoQuorum, PrivacyRefused, RateLimited, SchemaError
+
+
+# Soft failures: the model gave no answer and nothing was tried on it, so the route may pass to the next model.
+# A rate limit and a refusal by the quiet gate (MINION_BUSY) are the only ones. MINION_LOAD_FAILED is not: a load
+# that was tried and failed is a hard failure.
+SOFT = (RateLimited, Busy)
+
+
+def _skipped(meta: dict, name: str, e: Exception) -> None:
+    meta["busy" if isinstance(e, Busy) else "rate_limited"].append(name)
 
 
 VOTE_KEY = {"classify": "label", "grounded": "verdict"}   # the field the fast models vote on
@@ -61,7 +71,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     else:
         runs, quorum = [(route.fast[0], None)], 1
     meta = {"tool": tool, "fast": [m.name for m, _ in runs], "judge": None, "votes": {}, "schema_failures": [],
-            "debias": len(route.fast) == 1 and len(runs) == 2, "rate_limited": [], "failover": []}
+            "debias": len(route.fast) == 1 and len(runs) == 2, "rate_limited": [], "busy": [], "failover": []}
 
     if route.shortcut and tool == "classify":   # screen the text first: instruction-like segments are dropped before anything classifies it
         text, removed = defend.strip(route.shortcut[0], text)
@@ -76,14 +86,15 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
             if not meta["shortcut"]["escalated"]:
                 meta["fast"] = []   # nobody else was called
                 return {key: label}, meta
-        except RateLimited:
-            meta["rate_limited"].append(sm.name)
+        except SOFT as e:
+            _skipped(meta, sm.name, e)
         except SchemaError:
             meta["schema_failures"].append(sm.name)
 
     def one(m, order):
         t, sch = build(order)
-        # Rate limits are the one failure a route may fail over on; every other hard failure propagates.
+        # Rate limits and busy refusals are the only failures a route may fail over on; every other hard failure
+        # propagates. If every candidate is skipped, the last such error is raised.
         # A fallback never duplicates a model that already votes in this route.
         tried = [m] + [f for f in route.fallback if f is not m and f not in route.fast]
         limited = None
@@ -95,9 +106,9 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
                     out = engine.run(cand, t, text, sch, name, check), None
             except SchemaError as e:
                 out = None, e
-            except RateLimited as e:
-                meta["rate_limited"].append(cand.name)
-                limited = limited or e
+            except SOFT as e:
+                _skipped(meta, cand.name, e)
+                limited = e
                 continue
             if cand is not m:
                 meta["failover"].append([m.name, cand.name])
@@ -138,9 +149,11 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
                 return {"label": ranked[0][0]}, meta
             # a generative winner keeps its other fields (the quote); decision models give the verdict alone
             return next((r for _, r in valid if r[key] == ranked[0][0] and len(r) > 1), {key: ranked[0][0]}), meta
+        if not votes and failures and all(isinstance(e, SOFT) for _, e in failures):
+            raise failures[-1][1]   # nobody answered (busy or rate limited): the judge has nothing to verify
         if route.judge is None:
             if not votes:
-                raise failures[0][1]   # every fast model failed (schema or rate limit): report that, not a quorum miss
+                raise failures[0][1]   # every fast model failed (schema, rate limit or busy): report that, not a quorum miss
             raise NoQuorum(f"no judge configured and fast models did not reach quorum {quorum}: "
                            f"votes={dict(votes)} schema_failures={meta['schema_failures']}")
         meta["judge"] = route.judge.name
@@ -155,7 +168,7 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     if valid:
         return valid[0][1], meta
     first = failures[0][1]
-    if isinstance(first, RateLimited) or route.judge is None:   # the judge repairs bad output, not a missing answer
+    if isinstance(first, SOFT) or route.judge is None:   # the judge repairs bad output, not a missing answer
         raise first
     meta["judge"] = route.judge.name
     return judge_mod.repair(route.judge, task, text, schema, first.raw, str(first), check), meta

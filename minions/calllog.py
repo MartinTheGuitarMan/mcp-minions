@@ -46,6 +46,7 @@ def record(tool: str, sensitive: bool, started: float, text: str, meta: dict | N
            "shortcut_confidence": round(short["confidence"], 4) if short.get("confidence") is not None else None,
            "shortcut_threshold": short.get("threshold"),
            "failover": meta.get("failover") or None, "rate_limited": meta.get("rate_limited") or None,
+           "busy": meta.get("busy") or None,
            "injection_removed": len(meta.get("injection_removed") or []) or None,
            "downgraded": True if meta.get("downgraded") else None,
            "check_failures": meta.get("check_failures"),
@@ -153,6 +154,7 @@ def report(days: float = 7.0) -> dict:
             # value-check failures of fast models that the judge then repaired (unrepaired ones are in errors)
             "check_failures_repaired": dict(Counter(c for r in rows for c in r.get("check_failures") or [])),
             "rate_limited": sum(1 for r in rows if r.get("rate_limited")),
+            "busy": sum(1 for r in rows if r.get("busy")),
             "injection_segments_removed": sum(r.get("injection_removed") or 0 for r in rows),
             "tokens": _tokens(rows),
             "answered_by": dict(Counter([m for r in rows for m in (r.get("fast") or [])] +
