@@ -1,9 +1,13 @@
-"""Manual load and unload of managed local models (step 2 of docs/dynamic-models.md).
+"""Load and unload of managed local models (steps 2 and 3 of docs/dynamic-models.md).
 
 Only roster models with "manage": true can be touched, only ones minions loaded itself can be unloaded, and every load
 passes the quiet gate first (lifecycle.gate). The read-only module `lifecycle` stays read-only: everything that changes
 a runtime lives here, behind `run_action` and `http_post_json`, which tests replace. Commands are built from the
-roster's model key (owner config, never caller text), and the key is checked against a strict pattern."""
+roster's model key (owner config, never caller text), and the key is checked against a strict pattern.
+
+`ready` is the router's way in (step 3): before a call to a managed model it checks the model is resident and, if not,
+runs the same gate and load as `minion_load`. The request is never sent to a model that is not resident, because
+LM Studio (with just-in-time loading on) and Ollama would load it themselves and skip the gate."""
 from __future__ import annotations
 
 import fcntl
@@ -11,7 +15,9 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -127,7 +133,8 @@ def _total_gb(env, runner) -> float | None:
 
 # ---------- load and unload ----------
 def load(roster, name: str, env: dict | None = None, now: datetime | None = None, runner: Callable | None = None,
-         http_get: Callable | None = None, http_post: Callable | None = None, action: Callable | None = None) -> dict:
+         http_get: Callable | None = None, http_post: Callable | None = None, action: Callable | None = None,
+         by: str = "manual") -> dict:
     env = os.environ if env is None else env
     runner, http_get = runner or lifecycle.run_command, http_get or lifecycle.http_get_json
     http_post, action = http_post or http_post_json, action or run_action
@@ -153,6 +160,11 @@ def load(roster, name: str, env: dict | None = None, now: datetime | None = None
             calllog.event("refused", model=name, gate=verdict["reasons"][0].split(" ")[0])
             raise Busy("; ".join(verdict["reasons"]))
         if is_large:   # one large model at a time: make room by unloading our own, never someone else's
+            keys = [next(o["model"] for o in ours.values() if _same(o["model"], r["name"])) for r in mine_large]
+            busy = [c.name for c in roster.models.values() if c.manage and c.model in keys and _inflight[c.name]]
+            if busy:   # never unload a model with a request in flight
+                calllog.event("refused", model=name, gate="in_use")
+                raise Busy(f"{', '.join(busy)} is answering a call; it will not be unloaded to make room")
             for r in mine_large:
                 key = next(o["model"] for o in ours.values() if _same(o["model"], r["name"]))
                 other = next(c for c in roster.models.values() if c.model == key and c.manage)
@@ -167,7 +179,7 @@ def load(roster, name: str, env: dict | None = None, now: datetime | None = None
         ours[name] = {"model": cfg.model, "runtime": cfg.backend, "loaded_at": round(time.time())}
         _write_ours(env, ours)
         secs = round(time.time() - t0, 1)
-    calllog.event("load", model=name, ctx=cfg.context, free_before_pct=probes.free_pct, load_s=secs, by="manual")
+    calllog.event("load", model=name, ctx=cfg.context, free_before_pct=probes.free_pct, load_s=secs, by=by)
     return {"model": name, "state": "loaded", "context": cfg.context, "ttl_s": cfg.ttl_s, "load_s": secs}
 
 
@@ -189,3 +201,40 @@ def unload(roster, name: str, env: dict | None = None, now: datetime | None = No
         _write_ours(env, {k: v for k, v in ours.items() if k != name})
     calllog.event("unload", model=name, reason="manual")
     return {"model": name, "state": "unloaded"}
+
+
+# ---------- auto-load before a call (step 3) ----------
+_guard = threading.Lock()
+_locks: dict[str, threading.Lock] = {}
+_inflight: Counter = Counter()   # calls in progress per managed model name
+
+
+def is_resident(cfg, runner: Callable | None = None, http_get: Callable | None = None) -> bool:
+    """One cheap look at the model's own runtime (`lms ps --json` or Ollama's /api/ps). An unreachable runtime
+    counts as not resident, so the caller goes through the load path and fails there instead of sending a request."""
+    if cfg.backend == "lmstudio":
+        rows = lifecycle.parse_lms_ps((runner or lifecycle.run_command)(("lms", "ps", "--json")))
+    else:
+        rows = lifecycle.parse_ollama_ps((http_get or lifecycle.http_get_json)(lifecycle._ollama_root(cfg.base_url) + "/api/ps"))
+    return any(_same(cfg.model, r["name"]) for r in rows)
+
+
+@contextmanager
+def ready(roster, cfg, env: dict | None = None):
+    """Around one call to `cfg`. Unmanaged models pass straight through. A managed one that is not resident is loaded
+    first through `load` (quiet gate, TTL, context): a refusal raises MINION_BUSY, a failed load MINION_LOAD_FAILED.
+    One lock per model, so concurrent calls load it once; the model counts as in use until the call returns."""
+    if not cfg.manage:
+        yield
+        return
+    with _guard:
+        lock = _locks.setdefault(cfg.name, threading.Lock())
+        _inflight[cfg.name] += 1
+    try:
+        with lock:
+            if not is_resident(cfg):
+                load(roster, cfg.name, env, by="auto")
+        yield
+    finally:
+        with _guard:
+            _inflight[cfg.name] -= 1

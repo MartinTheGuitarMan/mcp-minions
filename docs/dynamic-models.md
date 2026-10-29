@@ -1,6 +1,6 @@
 # Dynamic models: design note
 
-Status: **design only, nothing here is implemented.** Today a roster names models that someone else has already
+Status: **steps 1 to 3 of the rollout (section 7) are implemented**; the rest is design. Today a roster names models that someone else has already
 downloaded and loaded. This note describes how minions could fetch, load, unload and trust models on its own
 without getting in the way of whatever else the machine is doing.
 
@@ -315,10 +315,30 @@ marker file as temp files), and the existing fake backend for the router. Subpro
    `manage: true`, gate applied, state file records ours. Roster validation for the new fields. Tests: a fake
    driver records calls; refusal paths return `MINION_BUSY`; unmanaged models are rejected; never unloads a model
    that is not ours.
-3. **Auto load and unload.** The router calls the manager before a call: resident, gate, load, fallback ladder.
-   TTL is passed at load time. Log events and the `minion_report` lifecycle block. Tests: fallback ladder order
-   including privacy (a sensitive call is never answered by cloud because the machine is busy), `busy: fail`, no
-   change when no model has `manage: true`, hard failures still propagate.
+3. **Auto load and unload** (implemented: `manage.ready`, called by the router). Before every call to a managed
+   model (fast, fallback, judge, grounded quote) the router checks residency with one cheap look (`lms ps --json`
+   or `/api/ps`); a resident model is used without the gate. Otherwise the step-2 load runs (gate, context, TTL,
+   room made by unloading our own idle large model), logged with `by: auto`. A refusal is `MINION_BUSY` and the
+   route's `fallback` list takes over (the fallback ladder is that list, in order); a failed load is
+   `MINION_LOAD_FAILED` and propagates. Tests (`tests/test_autoload.py`): load then call, busy then fallback, busy
+   never reaching a cloud model on a sensitive call, load failure propagating, no load when resident, concurrent
+   calls loading once, unmanaged models never checked, a model in flight never unloaded to make room.
+   Not built yet: `busy: fail` per route (a route without `fallback` already behaves that way), preferring another
+   resident model before the next fallback entry, and the early unload on a new hold marker.
+
+   Choices made here:
+   - **Never send a request to a managed model that is not resident.** LM Studio's just-in-time loading (on by
+     default; it loads a requested model at its own context and JIT TTL, and may unload the previous JIT model)
+     and Ollama's load-on-request would both skip the gate. The residency check before each call is what prevents
+     it. A sub-second window remains if the TTL ends between the check and the request; turning JIT loading off in
+     LM Studio closes it. Minions never changes runtime settings.
+   - **One lock per model** inside the process, plus the existing state-file lock across processes: concurrent
+     calls load once, and the second sees the model resident. A count of calls in flight per model stops a load
+     from unloading a model that is answering a call (that load is refused with `MINION_BUSY` instead).
+   - **Load time is not call time.** The load has its own budget (the `lms load` command's 600 s cap, the same as
+     `minion_load`); the model's `timeout` covers only the request, which starts once the model is resident. A
+     slow load therefore never turns into a request timeout. The caller waits for both, which suits jobs where
+     answers are seldom urgent.
 4. **Usage tracking and `remove?` tags.** Per-model usage in the state file from the log, tag rules, duplicate
    detection, report section, `minion_propose_remove` with pin and snooze. Proposes only; the delete command is
    shown, never run, in this step. Tests: tag rules on a fake log and fake clock (idle days, never-used 14 days, only

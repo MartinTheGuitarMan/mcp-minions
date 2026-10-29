@@ -11,7 +11,7 @@ import time
 
 from . import calllog, engine, gitdiff, lifecycle, manage, ratelimit, router, tokens, values
 from .config import ASK, Roster
-from .errors import BadConfig, BadInput, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
+from .errors import BadConfig, BadInput, Busy, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
 
 def read_text_file(cfg, path: str) -> str:
@@ -498,7 +498,8 @@ def grounded(cfg, claim: str, source: str, hint: str = "", sensitive: bool = Tru
 
 def _fetch_quote(roster, text: str, intro: str, verdict: str, sensitive: bool, meta: dict) -> str:
     """The quote for a verdict a decision model gave. No generative model on the route, or one that fails the
-    schema, gives an empty quote (so the verdict becomes unclear). Hard failures propagate."""
+    schema or that the quiet gate will not load, gives an empty quote (so the verdict becomes unclear).
+    Hard failures propagate."""
     route = router._gate(roster.route("grounded"), "grounded", sensitive)
     m = next((c for c in route.fast + route.fallback if c.kind != "decision"), None)
     if m is None:
@@ -509,9 +510,13 @@ def _fetch_quote(roster, text: str, intro: str, verdict: str, sensitive: bool, m
             "shows it, exactly as written. Leave quote empty if no passage shows it.")
     meta["quote_by"] = m.name
     try:
-        return engine.run(m, task, text, schema, "quote")["quote"].strip()
+        with manage.ready(roster, m):
+            return engine.run(m, task, text, schema, "quote")["quote"].strip()
     except SchemaError:
         meta["schema_failures"].append(m.name)
+        return ""
+    except Busy:   # the quiet gate would not load the quote model: no quote, as for a schema failure
+        meta.setdefault("busy", []).append(m.name)
         return ""
 
 

@@ -1,5 +1,6 @@
 """Per-tool routing: fast models (quorum for classify and grounded) -> judge only on disagreement or schema failure.
-Hard failures (MINION_DOWN, backend errors) always propagate; the judge never papers over them."""
+Hard failures (MINION_DOWN, backend errors) always propagate; the judge never papers over them.
+Every call to a model with "manage": true goes through manage.ready first: it is loaded if needed, behind the quiet gate."""
 from __future__ import annotations
 
 import contextvars
@@ -7,7 +8,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
-from . import decision, defend, engine, judge as judge_mod
+from . import decision, defend, engine, judge as judge_mod, manage
 from .config import VOTING_TOOLS, Roster
 from .errors import Busy, NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
@@ -100,10 +101,11 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
         limited = None
         for cand in tried:
             try:
-                if cand.kind == "decision":
-                    out = {key: decision.run(cand, t, text, order, descriptions)[0]}, None
-                else:
-                    out = engine.run(cand, t, text, sch, name, check), None
+                with manage.ready(roster, cand):   # a managed model is loaded first; the gate may refuse (MINION_BUSY)
+                    if cand.kind == "decision":
+                        out = {key: decision.run(cand, t, text, order, descriptions)[0]}, None
+                    else:
+                        out = engine.run(cand, t, text, sch, name, check), None
             except SchemaError as e:
                 out = None, e
             except SOFT as e:
@@ -158,10 +160,12 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
                            f"votes={dict(votes)} schema_failures={meta['schema_failures']}")
         meta["judge"] = route.judge.name
         if tool == "grounded":
-            out = judge_mod.verify_grounding(route.judge, task, text, labels, dict(votes))
+            with manage.ready(roster, route.judge):
+                out = judge_mod.verify_grounding(route.judge, task, text, labels, dict(votes))
             meta["judge_verdict"] = out["check"]
             return {"verdict": out["verdict"], "quote": out["quote"]}, meta
-        out, _ = judge_mod.verify_classification(route.judge, task, text, labels, dict(votes))
+        with manage.ready(roster, route.judge):
+            out, _ = judge_mod.verify_classification(route.judge, task, text, labels, dict(votes))
         meta["judge_verdict"] = out["verdict"]
         return {"label": out["label"]}, meta
 
@@ -171,4 +175,5 @@ def run(roster: Roster, tool: str, build, text: str, name: str, labels: list | N
     if isinstance(first, SOFT) or route.judge is None:   # the judge repairs bad output, not a missing answer
         raise first
     meta["judge"] = route.judge.name
-    return judge_mod.repair(route.judge, task, text, schema, first.raw, str(first), check), meta
+    with manage.ready(roster, route.judge):
+        return judge_mod.repair(route.judge, task, text, schema, first.raw, str(first), check), meta
