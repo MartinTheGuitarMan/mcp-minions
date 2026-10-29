@@ -24,6 +24,19 @@ def test_tag_rejects_bad_model_output(fake, cfg):
             tools.tag(cfg, "x", ["billing", "urgent", "spam"], 2)
 
 
+def test_tag_schema_sent_has_no_uniqueitems(fake, cfg):
+    reply(fake, labels=["billing"])
+    tools.tag(cfg, "Pay now!", ["billing", "urgent", "spam"], 2)
+    sent = fake.requests[0][1]["response_format"]["json_schema"]["schema"]
+    assert "uniqueItems" not in json.dumps(sent)
+
+
+def test_tag_duplicate_labels_are_a_schema_failure_not_deduped(fake, cfg):
+    reply(fake, labels=["billing", "billing"])
+    with pytest.raises(SchemaError, match="repeats a label"):
+        tools.tag(cfg, "x", ["billing", "urgent", "spam"], 2)
+
+
 def test_tag_input_checks(cfg):
     for kw in ({"labels": []}, {"labels": ["a", "a"]}, {"labels": ["a", "b"], "max_labels": 3}, {"labels": ["a"], "max_labels": 0}):
         with pytest.raises(BadInput):

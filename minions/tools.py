@@ -131,17 +131,25 @@ def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> d
                check=values.make_summary_check(text, max_words))
 
 
+def _check_unique_labels(obj: dict) -> None:
+    """Uniqueness is enforced here, not with "uniqueItems" in the schema: some constrained decoders (LM Studio's
+    MLX models) reject that key with HTTP 400. A repeated label is a schema failure, never silently deduped."""
+    labels = obj["labels"]
+    if len(set(labels)) != len(labels):
+        raise SchemaError(f"model output repeats a label: {labels}")
+
+
 def tag(cfg, text: str, labels: list[str], max_labels: int = 3, hint: str = "", sensitive: bool = True) -> dict:
     """Zero or more of the given labels (at most max_labels). Like classify, but the text may fit several."""
     _check_text(text)
     _check_tag_args(labels, max_labels)
     schema = {"type": "object", "properties": {"labels": {"type": "array", "items": {"type": "string", "enum": list(labels)},
-                                                          "uniqueItems": True, "maxItems": max_labels}},
+                                                          "maxItems": max_labels}},
               "required": ["labels"], "additionalProperties": False}
     task = (f"Pick every label that clearly applies to the data, at most {max_labels}, from: {', '.join(labels)}. "
             "Pick none if none applies." + (f" {hint}" if hint else ""))
     cfg = _routed(cfg, "tag")
-    return _go(cfg, "tag", lambda order=None: (task, schema), text, "tags", None, sensitive)
+    return _go(cfg, "tag", lambda order=None: (task, schema), text, "tags", None, sensitive, check=_check_unique_labels)
 
 
 MAX_BATCH = 50          # items per batch call
