@@ -1,10 +1,12 @@
 """check_claims: split a text into claims and mark each one supported or not against a source.
-A schema-valid reply is not an answer yet: every supported claim needs a quote found in the source and may only use
-numbers and capitalised names the source has, and no number or name of the text may drop out of the claims."""
+A schema-valid reply is not an answer yet: every supported claim needs a quote found in the source (one whose quote is not found is
+downgraded to unsupported with flag quote_not_found) and may only use numbers and capitalised names the source has, and no number or name of the text may drop out of the claims."""
 from __future__ import annotations
 
+import re
+
 from . import values
-from .errors import BadInput, Invented, NotInSource, SchemaError
+from .errors import Invented, SchemaError
 
 MAX_CLAIMS = 40
 SCHEMA = {"type": "object",
@@ -36,7 +38,24 @@ def terms(text: str, src: values.Source) -> tuple[list[str], list[str]]:
     return missing, every
 
 
-def make_check(text: str, source: str, quote_found):
+MIN_QUOTE = 3   # a quote shorter than this (non-space characters) proves nothing
+_GROUP = re.compile(r"(?<=\d)[,'\u00a0\u2009\u202f](?=\d{3}(?!\d))")   # thousands separators: 1,712 -> 1712
+_EDGE = ".,;:!?\"'\u201c\u201d\u2018\u2019()[]"
+
+
+def _norm(s: str) -> str:
+    """The light normalisation of values.py (case, accents, punctuation, whitespace), with thousands separators
+    removed from numbers first, so '1,712' and '1712' are one number. No fuzzy matching."""
+    return f" {values._fold(_GROUP.sub('', s))} "
+
+
+def quote_found(quote: str, source: str) -> bool:
+    """The quote occurs in the source as whole words, after normalisation. Punctuation round the quote is ignored."""
+    q = values._fold(_GROUP.sub("", quote.strip().strip(_EDGE)))
+    return len(q.replace(" ", "")) >= MIN_QUOTE and f" {q} " in _norm(source)
+
+
+def make_check(text: str, source: str, quote_found=quote_found):
     src = values.Source(source)
     wanted = terms(text, values.Source(text))[1]   # numbers and names the text mentions
 
@@ -52,8 +71,9 @@ def make_check(text: str, source: str, quote_found):
                     c["quote"] = ""   # a quote on an unsupported claim proves nothing: dropped, not trusted
                 continue
             if not quote_found(c["quote"], source):
-                raise NotInSource(f"supported claim {c['claim'][:60]!r} has no quote found in the source "
-                                  f"(quoted {c['quote'][:60]!r})", str(obj)[:200])
+                # never trusted, but only this claim is lost: it is downgraded and flagged, the rest stands
+                c["supported"], c["quote"], c["flag"] = False, "", "quote_not_found"
+                continue
             missing, _ = terms(c["claim"], src)
             if missing:
                 raise Invented(f"supported claim {c['claim'][:60]!r} names what the source does not: {missing}",

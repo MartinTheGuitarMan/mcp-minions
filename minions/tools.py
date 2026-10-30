@@ -624,7 +624,8 @@ def _quote_in(quote: str, source: str) -> bool:
 
 def check_claims(cfg, text: str, source: str, hint: str = "", sensitive: bool = True) -> dict:
     """Split text into claims and mark each supported or not against source. Returns {"claims": [{claim, supported,
-    quote}]}. A supported claim needs a quote found in the source; a claim with a number or name the source lacks
+    quote}]}. A supported claim needs a quote found in the source, else it is downgraded to unsupported with
+    "flag": "quote_not_found" (the other claims stand); a claim with a number or name the source lacks
     cannot be supported (MINION_NOT_IN_SOURCE, MINION_INVENTED); a claim of the text that was left out is a schema
     failure."""
     from . import claims
@@ -634,7 +635,7 @@ def check_claims(cfg, text: str, source: str, hint: str = "", sensitive: bool = 
         raise BadInput("text is limited to 6000 characters and source to 12000")
     clean = lambda t: t.replace("=====", "== ==")
     data = f"=====TEXT=====\n{clean(text)}\n=====SOURCE=====\n{clean(source)}"
-    check = claims.make_check(text, source, _quote_in)
+    check = claims.make_check(text, source)
     return _go(Roster.coerce(cfg), "check_claims", lambda order=None: (claims.TASK + (f" {hint}" if hint else ""),
                                                                        claims.SCHEMA), data, "claims", None, sensitive,
                check=check)

@@ -96,8 +96,8 @@ def grounded(claim: str, source: str, hint: str = "", sensitive: bool = True) ->
 @guarded
 def check_claims(text: str, source: str, hint: str = "", sensitive: bool = True) -> dict:
     """Split text into factual claims and mark each supported or not against source. Returns {"claims": [{claim,
-    supported, quote}]}. A supported claim carries a quote copied from the source (checked in code) and may use only
-    numbers and names the source has; a claim of the text that the model left out fails the call."""
+    supported, quote}]}. A supported claim carries a quote copied from the source (checked in code; one whose quote
+    is not found is downgraded to unsupported with flag "quote_not_found") and may use only numbers and names the source has; a claim of the text that the model left out fails the call."""
     return tools.check_claims(Roster.from_env(), text, source, hint, sensitive)
 
 

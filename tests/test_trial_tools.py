@@ -29,8 +29,36 @@ def test_check_claims_good_reply(fake, cfg):
 
 def test_check_claims_catches_a_made_up_quote(fake, cfg):
     reply(fake, claims=[claim("About 8,400 people came.", True, "eight thousand four hundred came")])
-    with pytest.raises(NotInSource):
-        tools.check_claims(cfg, "About 8,400 people came.", SRC)
+    c = tools.check_claims(cfg, "About 8,400 people came.", SRC)["claims"][0]
+    assert (c["supported"], c["quote"], c["flag"]) == (False, "", "quote_not_found")
+
+
+def test_check_claims_a_planted_quote_loses_only_its_own_claim(fake, cfg):
+    reply(fake, claims=[claim("About 8,400 people came.", True, "drew about 8,400 people"),
+                        claim("Entry was free.", True, "Entry was free of charge and open to all")])
+    a, b = tools.check_claims(cfg, "About 8,400 people came. Entry was free.", SRC)["claims"]
+    assert a["supported"] and "flag" not in a
+    assert not b["supported"] and b["flag"] == "quote_not_found"
+
+
+@pytest.mark.parametrize("quote", ["With GPS: 1,712", "with gps 1712", "WITH GPS: 1712.", "Total files:\n10,174"])
+def test_check_claims_quote_ignores_number_format_case_and_punctuation(fake, cfg, quote):
+    src = "Total files: 10174\nWith GPS: 1712"
+    reply(fake, claims=[claim("1,712 files have GPS.", True, quote)])
+    assert tools.check_claims(cfg, "1,712 files have GPS.", src)["claims"][0]["supported"] is True
+
+
+def test_check_claims_quote_stays_exact_about_words_and_numbers(fake, cfg):
+    src = "Total files: 10174\nWith GPS: 1712"
+    for bad in ("With GPS: 1,713", "With GPS: 17", "files 10", "Without GPS: 1712", "Missing GPS"):
+        reply(fake, claims=[claim("1,712 files have GPS.", True, bad)])
+        assert tools.check_claims(cfg, "1,712 files have GPS.", src)["claims"][0]["flag"] == "quote_not_found", bad
+
+
+def test_check_claims_schema_failure_still_raises(fake, cfg):
+    fake.replies.append(json.dumps({"claims": [{"claim": "Entry was free.", "quote": "Entry was free."}]}))
+    with pytest.raises(SchemaError):
+        tools.check_claims(cfg, "Entry was free.", SRC)
 
 
 def test_check_claims_catches_supported_claim_with_unknown_name_or_number(fake, cfg):
