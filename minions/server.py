@@ -119,6 +119,14 @@ def dedupe(items: list[dict], hint: str = "", sensitive: bool = True) -> dict:
 
 @mcp.tool()
 @guarded
+def score(text: str, criterion: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Rate text from 1 to 5 on a criterion (1 = not at all, 5 = fully). Returns {"score": int, "quote": str}: the
+    score is an integer in range and the quote, the passage that supports it, is checked in code to occur in the text."""
+    return tools.score(Roster.from_env(), text, criterion, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
 def classify_batch(items: list[dict], labels: list[str], hint: str = "", sensitive: bool = True,
                    descriptions: dict[str, str] | None = None) -> dict:
     """classify for up to 50 items [{id, text}]. Returns one result per id ({id, label} or {id, error: {code,

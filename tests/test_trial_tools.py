@@ -151,3 +151,26 @@ def test_dedupe_input_checks(cfg):
             tools.dedupe(cfg, items)
     with pytest.raises(BadInput):
         tools.dedupe(cfg, [{"id": str(n), "text": "x"} for n in range(51)])
+
+
+# ---------------------------------------------------------------- score
+def test_score_good_reply(fake, cfg):
+    reply(fake, score=4, quote="Please send")
+    assert tools.score(cfg, "Please send the report.", "politeness") == {"score": 4, "quote": "Please send"}
+
+
+@pytest.mark.parametrize("bad,exc", [({"score": 0, "quote": "Please"}, SchemaError), ({"score": 6, "quote": "Please"}, SchemaError),
+                                     ({"score": 3.5, "quote": "Please"}, SchemaError), ({"score": "4", "quote": "Please"}, SchemaError),
+                                     ({"score": True, "quote": "Please"}, SchemaError),
+                                     ({"score": 4, "quote": "Kindly forward"}, NotInSource), ({"score": 4, "quote": ""}, NotInSource),
+                                     ({"score": 4}, SchemaError)])
+def test_score_catches_bad_replies(fake, cfg, bad, exc):
+    reply(fake, **bad)
+    with pytest.raises(exc):
+        tools.score(cfg, "Please send the report.", "politeness")
+
+
+def test_score_input_checks(cfg):
+    for kw in ({"text": ""}, {"criterion": ""}, {"criterion": "x" * 301}):
+        with pytest.raises(BadInput):
+            tools.score(cfg, **{"text": "x", "criterion": "y", **kw})

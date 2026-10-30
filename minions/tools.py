@@ -11,7 +11,8 @@ import time
 
 from . import calllog, engine, gitdiff, lifecycle, manage, ratelimit, router, tokens, values
 from .config import ASK, Roster
-from .errors import BadConfig, BadInput, Busy, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
+from .errors import (BadConfig, BadInput, Busy, MinionDown, MinionError, NoQuorum, NotInSource, PrivacyRefused, RateLimited,
+                     SchemaError)
 
 
 def read_text_file(cfg, path: str) -> str:
@@ -628,3 +629,21 @@ def dedupe(cfg, items: list, hint: str = "", sensitive: bool = True) -> dict:
 
     return _go(Roster.coerce(cfg), "dedupe", lambda order=None: (task, dd.schema(ids)), dd.render(pairs), "groups", None,
                sensitive, after=after, check=dd.make_check(ids))
+
+
+def score(cfg, text: str, criterion: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Rate text 1 to 5 on a criterion. Returns {"score": int, "quote": str}: the score is an integer in range (a
+    bool or a float is a schema failure) and the quote occurs in the text (MINION_NOT_IN_SOURCE)."""
+    from . import scoring
+    _check_text(text)
+    if not isinstance(criterion, str) or not criterion.strip() or len(criterion) > 300:
+        raise BadInput("criterion must be a non-empty string of at most 300 characters")
+
+    def check(obj):
+        if isinstance(obj["score"], bool) or not isinstance(obj["score"], int) or not 1 <= obj["score"] <= 5:
+            raise SchemaError(f"score must be an integer from 1 to 5, got {obj['score']!r}", str(obj)[:200])
+        if not _quote_found(obj["quote"], text):
+            raise NotInSource(f"the quote {obj['quote'][:60]!r} is not in the text", str(obj)[:200])
+
+    return _go(Roster.coerce(cfg), "score", lambda order=None: (scoring.task(criterion.strip()) + (f" {hint}" if hint else ""),
+                                                               scoring.SCHEMA), text, "score", None, sensitive, check=check)
