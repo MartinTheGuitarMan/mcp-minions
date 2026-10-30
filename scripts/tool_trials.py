@@ -35,7 +35,8 @@ from minions.config import Roster  # noqa: E402
 from minions.errors import (Busy, MinionDown, MinionError, PrivacyRefused, RateLimited)  # noqa: E402
 
 TRIAL_TOOLS = ("check_claims", "commit_message", "dedupe", "score", "translate")
-IMPL = {t: ("minions.tools", t) for t in TRIAL_TOOLS}   # `dedupe` failed its trial and was removed: its cases stay as evidence, the call no longer runs
+IMPL = {"check_claims_holes": ("minions.tools", "check_claims")}   # runner name of the 2026-10-30 (2) set
+IMPL |= {t: ("minions.tools", t) for t in TRIAL_TOOLS}   # `dedupe` failed its trial and was removed: its cases stay as evidence, the call no longer runs
 
 # ---------------------------------------------------------------- cases (all invented)
 _FEST = ("The Harbor Lights Festival ran from 12 to 14 June in the town of Velmar. About 8,400 people attended, up "
@@ -107,6 +108,46 @@ CLAIMS += [
     ("h13", _SENS, "Firmware 2.5.0 runs at the Kestrel Ridge site.", [("2.5.0", False, 0), ("kestrel", True, 0)]),
     ("h14", _SENS, "The site is run by Dunmore Telecom.", [("dunmore", False, 1)]),
     ("h15", _SENS, "The sensor rebooted 40 times and had 99.2% uptime.", [("40", False, 0), ("99.2", True, 0)]),
+]
+
+# Set for the two holes left in check_claims (docs/tool-trials.md, "Follow-up 2026-10-30 (2)"), written before any run of it.
+# Table-like source lines, number formats, condensed sentences, wrong numbers (flag 2: must stay unsupported), claims
+# missing from the source, and sentences next to tempting extra facts in the source: `banned` lists phrases of those
+# facts, and no returned claim may hold one (a claim that is not in the text). Flag 1 = invented entity.
+_SCAN = ("Media scan\nTotal files: 4821\nWith GPS: 903\nNo date: 17\nSame day as file date: 2650\nDuplicates found: 112\n"
+         "Scanner: Orbit S9\nFolder: Harbour Archive")
+_PUMP = ("Pump station report\nUptime: 98.6%\nRestarts: 3\nFirmware: v5.1.0\nSite: Alder Point\nInspected by: Lena Grau\n"
+         "Last service: 2026-05-12\nOpen faults: 2")
+_DEPOT = ("The Alder Point depot has 41 vehicles. Twelve of them are electric. Servicing is done every 6 weeks by Quill "
+          "Garage. The depot closes at 22:00 on weekdays.")
+# (id, source, text, [(key, expected_supported, flag)], [banned phrases])
+CLAIMS2 = [
+    ("r01", _SCAN, "903 files have GPS.", [("903", True, 0)], []),
+    ("r02", _SCAN, "There are 4,821 files in total.", [("4,821|4821", True, 0)], []),
+    ("r03", _SCAN, "2,650 files share the day of the file date.", [("2,650|2650", True, 0)], []),
+    ("r04", _SCAN, "112 duplicates were found.", [("112", True, 0)], []),
+    ("r05", _SCAN, "9,030 files have GPS.", [("9,030|9030", False, 2)], []),
+    ("r06", _SCAN, "Only 71 files have no date.", [("71", False, 2)], []),
+    ("r07", _SCAN, "The scan found 4,128 files.", [("4,128|4128", False, 2)], []),
+    ("r08", _SCAN, "The scan covered 4,821 files, of which 903 have GPS and 17 have no date.",
+     [("4,821|4821", True, 0), ("903", True, 0), ("17", True, 0)], []),
+    ("r09", _SCAN, "The scanner was an Orbit S9.", [("orbit", True, 0)], ["harbour", "duplicate"]),
+    ("r10", _SCAN, "The files are in the Harbour Archive folder.", [("harbour", True, 0)], ["4,821", "4821", "903"]),
+    ("r11", _SCAN, "The scan took 40 minutes.", [("40 minutes", False, 0)], []),
+    ("r12", _SCAN, "The scanner was made by Brightwell.", [("brightwell", False, 1)], []),
+    ("r13", _PUMP, "The station was up 98.6 percent of the time.", [("98.6", True, 0)], []),
+    ("r14", _PUMP, "It restarted 3 times.", [("3 times|restart", True, 0)], []),
+    ("r15", _PUMP, "Lena Grau inspected the station.", [("lena", True, 0)], []),
+    ("r16", _PUMP, "It restarted 30 times.", [("30", False, 2)], []),
+    ("r17", _PUMP, "The firmware is version 5.1.0.", [("5.1.0", True, 0)], ["alder", "lena", "98.6", "fault"]),
+    ("r18", _PUMP, "Alder Point had 2 open faults and was last serviced in 2026.",
+     [("fault", True, 0), ("2026", True, 0)], []),
+    ("r19", _PUMP, "The station has a backup generator.", [("generator", False, 0)], []),
+    ("r20", _PUMP, "Uptime was 89.6%.", [("89.6", False, 2)], []),
+    ("r21", _DEPOT, "The depot has 41 vehicles, 12 of them electric.", [("41", True, 0), ("electric", True, 0)], []),
+    ("r22", _DEPOT, "Servicing happens every 6 weeks.", [("6 weeks", True, 0)], []),
+    ("r23", _DEPOT, "The depot closes at 22:00 on weekdays.", [("22:00", True, 0)], ["41", "quill", "electric", "6 weeks"]),
+    ("r24", _DEPOT, "Servicing is done every 8 weeks.", [("8 weeks", False, 2)], []),
 ]
 
 
@@ -242,6 +283,15 @@ def score_claims(out: dict, keys: list) -> tuple[bool, bool]:
     return ok, invented
 
 
+def score_claims2(out: dict, keys: list, banned: list) -> tuple[bool, bool]:
+    """(correct, invented). invented: a wrong number or an invented entity returned as supported, or a returned claim that
+    holds a phrase of `banned` (a fact of the source that is not in the text)."""
+    ok, invented = score_claims(out, [(k, e, 1 if f else 0) for k, e, f in keys])
+    texts = [c["claim"].lower() for c in out["claims"]]
+    extra = any(b in t for t in texts for b in banned)
+    return ok and not extra, invented or extra
+
+
 def score_commit(out: dict, kw: list, banned: list) -> tuple[bool, bool]:
     subject, body = out["subject"].lower(), out["body"].lower()
     hit = any(k in subject or k in body for k in kw)
@@ -268,6 +318,8 @@ def cases(tool: str) -> list:
     """-> [(case id, kwargs for the tool call, scorer(out) -> (ok, invented))]"""
     if tool == "check_claims":
         return [(i, {"text": t, "source": s}, lambda o, k=k: score_claims(o, k)) for i, s, t, k in CLAIMS]
+    if tool == "check_claims_holes":
+        return [(i, {"text": t, "source": s}, lambda o, k=k, b=b: score_claims2(o, k, b)) for i, s, t, k, b in CLAIMS2]
     if tool == "commit_message":
         return [(i, {"diff": d}, lambda o, k=k, b=b: score_commit(o, k, b)) for i, d, k, b in COMMITS]
     if tool == "dedupe":

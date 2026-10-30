@@ -253,8 +253,8 @@ Real runs (one sentence at a time against the best-matching lines of a source no
    check that no number or name of the text drops out of the claims is unchanged.
 
 **Set:** 24 new invented cases (`scripts/tool_trials.py`, ids `r01` to `r24`, runner name `check_claims_holes`): table-like
-source lines, number formats, condensed sentences, wrong numbers (ids marked `w`), claims missing from the source, and
-cases where the source holds a tempting extra fact (ids marked `x`). `air-qwen`, `check_claims` only, 3 repeats, AC power,
+source lines, number formats, condensed sentences, wrong numbers (r05, r06, r07, r16, r20, r24), claims missing from the source, and
+cases where the source holds a tempting extra fact (r09, r10, r17, r23). `air-qwen`, `check_claims` only, 3 repeats, AC power,
 local (`sensitive=true`), roster read-only.
 
 **Pass:** all of
@@ -262,5 +262,5 @@ local (`sensitive=true`), roster read-only.
 - every wrong number stays unsupported (0 wrong-number claims returned as supported);
 - 0 claims returned that are not in the text (also 0 invented-entity claims returned as supported).
 
-The scorer counts the last two together as "invented" and the case id says which; the record of a failing case is
+The scorer counts the last two together as "invented" and the case id says which (list above); the record of a failing case is
 reported as a failure, not tuned away. After the set is committed, no code or prompt changes: a fail is reported as a fail.

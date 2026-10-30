@@ -317,3 +317,15 @@ def test_check_claims_all_claims_not_in_text_is_a_schema_failure(fake, cfg):
     reply(fake, claims=[claim("Velmar has a harbour museum.", False)])
     with pytest.raises(SchemaError):
         tools.check_claims(cfg, "Entry was free.", SRC)
+
+
+def test_claims2_scorer_flags_wrong_numbers_and_extra_claims():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import tool_trials as tt
+    wrong = {"claims": [claim("9030 files have GPS", True, "x")]}
+    assert tt.score_claims2(wrong, [("9,030|9030", False, 2)], []) == (False, True)
+    assert tt.score_claims2({"claims": [claim("9030 files have GPS", False)]}, [("9,030|9030", False, 2)], []) == (True, False)
+    extra = {"claims": [claim("The scanner was an Orbit S9", True), claim("Folder is Harbour", True)]}
+    assert tt.score_claims2(extra, [("orbit", True, 0)], ["harbour"]) == (False, True)
