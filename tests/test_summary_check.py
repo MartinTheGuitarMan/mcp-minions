@@ -37,6 +37,7 @@ def fails(s, source=REPORT, max_words=60):
 # ---------- through the tool ----------
 def test_invented_number_is_minion_invented(fake, cfg):
     summary(fake, "Port Vellmar approved 2 million EUR for a crane.")
+    summary(fake, "Port Vellmar approved 2 million EUR for a crane.")   # the one repair retry fails the same way
     with pytest.raises(Invented, match="MINION_INVENTED: .*'2'"):
         tools.summarize(cfg, REPORT, 30)
 
@@ -61,6 +62,7 @@ def test_summarize_file_runs_the_same_check(fake, cfg, tmp_path):
     f = tmp_path / "report.txt"
     f.write_text(REPORT, encoding="utf-8")
     summary(fake, "Dana Okafor and Lee Park lead the crane project.")
+    summary(fake, "Dana Okafor and Lee Park lead the crane project.")   # the repair retry
     with pytest.raises(Invented, match="'Lee', 'Park'"):
         tools.summarize(cfg, tools.read_text_file(cfg, str(f)), 30)
 
@@ -144,8 +146,66 @@ def test_judge_repair_must_pass_the_check_too(fake, tmp_path, monkeypatch):
     monkeypatch.setenv("MINION_LOG", str(tmp_path / "calls.jsonl"))
     bad = "The board approved 2 million EUR."
     summary(fake, bad, "f1")
-    summary(fake, bad, "j")
-    summary(fake, bad, "j")
+    for _ in range(2):   # the judge repairs once, then the shared retry runs the whole route a second time
+        summary(fake, bad, "f1")
+        summary(fake, bad, "j")
+        summary(fake, bad, "j")
     with pytest.raises(Invented, match="failed validation after one retry"):
         tools.summarize(with_judge(fake), REPORT, 30)
     assert calllog.report(1)["errors"] == {"MINION_INVENTED": 1}
+
+
+# ---------- one repair retry on MINION_INVENTED ----------
+def test_repair_retry_succeeds_and_names_the_terms(fake, cfg):
+    summary(fake, "The Port Vellmar board bought a crane for the UC project.")
+    summary(fake, "The Port Vellmar board approved a crane.")
+    out = tools.summarize(cfg, REPORT, 40)
+    assert out == {"summary": "The Port Vellmar board approved a crane."}
+    assert len(fake.requests) == 2
+    retry = fake.requests[1][1]["messages"][-1]["content"]
+    assert "'UC'" in retry and "<data>" in retry and "Port Vellmar" in retry   # terms named, data still wrapped
+
+
+def test_repair_retry_fails_and_raises(fake, cfg):
+    summary(fake, "The board funded the UC project.")
+    summary(fake, "The board funded the UC project again.")
+    with pytest.raises(Invented, match="MINION_INVENTED: .*'UC'"):
+        tools.summarize(cfg, REPORT, 40)
+    assert len(fake.requests) == 2   # exactly one retry
+
+
+def test_repair_reply_with_a_second_invented_term_is_still_caught(fake, cfg):
+    summary(fake, "The board funded the UC project.")
+    summary(fake, "The board funded a crane under CLI rules.")
+    with pytest.raises(Invented, match="'CLI'"):
+        tools.summarize(cfg, REPORT, 40)
+
+
+def test_other_failures_are_not_retried(fake, cfg):
+    summary(fake, "word " * 80)   # too long: a different check, not repaired by this retry
+    with pytest.raises(TooLong):
+        tools.summarize(cfg, REPORT, 20)
+    assert len(fake.requests) == 1
+
+
+def test_repair_is_logged_as_repaired(fake, cfg, tmp_path, monkeypatch):
+    log = tmp_path / "calls.jsonl"
+    monkeypatch.setenv("MINION_LOG", str(log))
+    summary(fake, "The board funded the UC project.")
+    summary(fake, "The board approved a crane.")
+    tools.summarize(cfg, REPORT, 40)
+    row = json.loads(log.read_text().splitlines()[-1])
+    assert not row.get("error") and row["check_failures"] == ["MINION_INVENTED"]
+    assert calllog.report(1)["check_failures_repaired"] == {"MINION_INVENTED": 1}
+
+
+def test_repair_applies_through_summarize_url(fake, cfg, monkeypatch):
+    from minions import fetch
+    monkeypatch.setattr(fetch, "_resolve", lambda h, p: ["93.184.216.34"])
+    monkeypatch.setattr(fetch, "_request", lambda *a: (200, {"content-type": "text/html"}, f"<p>{REPORT}</p>".encode()))
+    summary(fake, "Port Vellmar funds the UC project.")
+    summary(fake, "Port Vellmar approved a crane.")
+    out = tools.summarize_url(cfg, "https://news.example.org/a", 40)
+    assert out["summary"] == "Port Vellmar approved a crane."
+
+

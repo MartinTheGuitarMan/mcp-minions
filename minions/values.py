@@ -233,7 +233,9 @@ def make_summary_check(text: str, max_words: int):
                 missing.append(w)
         if missing:
             shown = ", ".join(repr(t) for t in dict.fromkeys(missing))
-            raise Invented(f"the summary names what the source does not: {shown[:200]}", str(obj)[:200])
+            err = Invented(f"the summary names what the source does not: {shown[:200]}", str(obj)[:200])
+            err.terms = list(dict.fromkeys(missing))   # for summarize's one repair retry
+            raise err
         return []
 
     return check

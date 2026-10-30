@@ -11,7 +11,7 @@ import time
 
 from . import calllog, engine, fetch, gitdiff, lifecycle, manage, ratelimit, router, tokens, values
 from .config import ASK, Roster
-from .errors import BadConfig, BadInput, Busy, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
+from .errors import BadConfig, Invented, BadInput, Busy, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
 
 def read_text_file(cfg, path: str) -> str:
@@ -27,14 +27,24 @@ def read_text_file(cfg, path: str) -> str:
         raise BadInput(f"file is not valid UTF-8: {path}") from e
 
 
-def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=None, after=None, check=None) -> dict:
+def _go(cfg, tool, build, text, name, labels=None, sensitive=True, descriptions=None, after=None, check=None,
+        repair=None) -> dict:
     """after(out, meta) -> out: a check that runs inside the same log line and token tally as the call.
-    check(obj): a per-reply check the router treats as part of the schema (see router.run)."""
+    check(obj): a per-reply check the router treats as part of the schema (see router.run).
+    repair(e) -> build: on MINION_INVENTED, one more run with a task that names the terms to drop. The new reply goes
+    through the same check; if it fails again, its error is raised. The log line shows MINION_INVENTED as repaired."""
     roster = Roster.coerce(cfg)
     started = time.time()
     tally = tokens.start()
     try:
-        out, meta = router.run(roster, tool, build, text, name, labels, sensitive, descriptions, check)
+        try:
+            out, meta = router.run(roster, tool, build, text, name, labels, sensitive, descriptions, check)
+        except Invented as e:
+            if repair is None:
+                raise
+            out, meta = router.run(roster, tool, repair(e), text, name, labels, sensitive, descriptions, check)
+            meta["check_failures"] = [*(meta.get("check_failures") or []), e.code]
+            meta["retry_repaired"] = True
         if after is not None:
             out = after(out, meta)
     except MinionError as e:
@@ -127,8 +137,14 @@ def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True, tool
               "required": ["summary"], "additionalProperties": False}
     task = (f"Summarize the data in at most {max_words} words. Use only numbers, dates and names that the data "
             "states, written as the data writes them.")
+    def repair(e):
+        terms = ", ".join(repr(t) for t in getattr(e, "terms", [])) or "the terms it named"
+        again = (f"{task} Your previous summary used terms that the data does not contain: {terms}. Write the "
+                 "summary again without them: do not shorten names to acronyms or add terms; use only words from the data.")
+        return lambda order=None: (again, schema)
+
     return _go(cfg, tool, lambda order=None: (task, schema), text, "summary", None, sensitive,
-               check=values.make_summary_check(text, max_words))
+               check=values.make_summary_check(text, max_words), repair=repair)
 
 
 URL_TEXT_CHARS = 8000   # as CHUNK_CHARS: a page longer than this is summarized from its start, and says so
