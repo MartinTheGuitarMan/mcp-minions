@@ -127,6 +127,14 @@ def score(text: str, criterion: str, hint: str = "", sensitive: bool = True) -> 
 
 @mcp.tool()
 @guarded
+def translate(text: str, target: str = "en", hint: str = "", sensitive: bool = True) -> dict:
+    """Translate Swedish to English (target "en") or English to Swedish (target "sv"). Returns {"translation": str}.
+    Every number and capitalised name of the source must survive and none may be added; checked in code."""
+    return tools.translate(Roster.from_env(), text, target, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
 def classify_batch(items: list[dict], labels: list[str], hint: str = "", sensitive: bool = True,
                    descriptions: dict[str, str] | None = None) -> dict:
     """classify for up to 50 items [{id, text}]. Returns one result per id ({id, label} or {id, error: {code,

@@ -174,3 +174,36 @@ def test_score_input_checks(cfg):
     for kw in ({"text": ""}, {"criterion": ""}, {"criterion": "x" * 301}):
         with pytest.raises(BadInput):
             tools.score(cfg, **{"text": "x", "criterion": "y", **kw})
+
+
+# ---------------------------------------------------------------- translate
+def test_translate_good_replies(fake, cfg):
+    reply(fake, translation="Tomas Reyes opened the library in Velmar at 9 on 4 May 2027.")
+    out = tools.translate(cfg, "Tomas Reyes öppnade biblioteket i Velmar klockan 9 den 4 maj 2027.", "en")
+    assert "Velmar" in out["translation"]
+    reply(fake, translation="Vi sålde 3,5 ton potatis till Nordlys.")
+    tools.translate(cfg, "We sold 3.5 tons of potatoes to Nordlys on Friday.", "sv")   # 3.5 / 3,5 and Friday are fine
+
+
+@pytest.mark.parametrize("src,bad,exc", [
+    ("Tomas Reyes opened it at 9 in Velmar.", "Tomas Reyes opened it at 10 in Velmar.", (NotInSource, Invented)),
+    ("Tomas Reyes opened it at 9 in Velmar.", "Tomas Reyes opened it in Velmar.", NotInSource),
+    ("Tomas Reyes opened it at 9 in Velmar.", "Tomas Reyes opened it at 9 in Velmar with 40 guests.", Invented),
+    ("Tomas Reyes opened it at 9 in Velmar.", "Tomas Reyes opened it at 9 in Oskarsvik.", (NotInSource, Invented)),
+    ("Tomas Reyes opened it at 9 in Velmar.", "Tomas Reyes and Anna Berg opened it at 9 in Velmar.", Invented),
+    ("Tomas Reyes opened it at 9 in Velmar.", "Tomas opened it at 9 in Velmar.", (NotInSource, Invented)),
+    ("Thanks.", "Thanks a lot for everything you have done for us, this really means a great deal to all of us.", TooLong),
+    ("Tomas Reyes opened it at 9 in Velmar.", "  ", EmptyValue)])
+def test_translate_catches_changed_added_or_dropped_facts(fake, cfg, src, bad, exc):
+    reply(fake, translation=bad)
+    with pytest.raises(exc):
+        tools.translate(cfg, src, "en")
+
+
+def test_translate_input_checks(cfg):
+    with pytest.raises(BadInput):
+        tools.translate(cfg, "hej", "de")
+    with pytest.raises(BadInput):
+        tools.translate(cfg, "", "en")
+    with pytest.raises(BadInput):
+        tools.translate(cfg, "x" * 6001, "en")

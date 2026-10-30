@@ -647,3 +647,17 @@ def score(cfg, text: str, criterion: str, hint: str = "", sensitive: bool = True
 
     return _go(Roster.coerce(cfg), "score", lambda order=None: (scoring.task(criterion.strip()) + (f" {hint}" if hint else ""),
                                                                scoring.SCHEMA), text, "score", None, sensitive, check=check)
+
+
+def translate(cfg, text: str, target: str = "en", hint: str = "", sensitive: bool = True) -> dict:
+    """Swedish to English (target "en") or English to Swedish (target "sv"). Returns {"translation": str}. Every
+    number and capitalised name of the source must survive and none may be added (MINION_NOT_IN_SOURCE,
+    MINION_INVENTED); a translation far longer or shorter than the source is MINION_TOO_LONG."""
+    from . import translate as tr
+    _check_text(text)
+    if target not in tr.LANGS:
+        raise BadInput('target must be "en" (Swedish to English) or "sv" (English to Swedish)')
+    if len(text) > 6000:
+        raise BadInput("text is limited to 6000 characters; translate it in parts")
+    return _go(Roster.coerce(cfg), "translate", lambda order=None: (tr.task(target) + (f" {hint}" if hint else ""), tr.SCHEMA),
+               text, "translation", None, sensitive, check=tr.make_check(text))

@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from minions import tokens  # noqa: E402
-from minions.config import Roster, Route  # noqa: E402
+from minions.config import Roster  # noqa: E402
 from minions.errors import (Busy, MinionDown, MinionError, PrivacyRefused, RateLimited)  # noqa: E402
 
 TRIAL_TOOLS = ("check_claims", "commit_message", "dedupe", "score", "translate")
