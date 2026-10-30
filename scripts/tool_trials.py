@@ -317,7 +317,7 @@ def run(args) -> int:
         rpm = (raw["models"][model].get("limits") or {}).get("rpm")
         gap = (60.0 / rpm + 0.5) if rpm else 0.0
         path = out_dir / f"{model}.jsonl"
-        stop_reason = None
+        stop_reason, limited_in_a_row = None, 0
         for tool in tool_names:
             todo = [(cid, kw, sc, rep) for cid, kw, sc in cases(tool) for rep in range(args.repeats)]
             attempts = 0
@@ -334,7 +334,10 @@ def run(args) -> int:
                     rec = one_call(tool, roster, kw, sc, sensitive=not cloud)
                     if gap:
                         time.sleep(gap)
-                    if rec["status"] == "not_run" and rec["reason"] in ("busy", "rate_limited") and attempts < 3:
+                    limited_in_a_row = limited_in_a_row + 1 if rec.get("reason") == "rate_limited" else 0
+                    if limited_in_a_row >= 8:   # a free tier that stays limited is out, not slow
+                        stop_reason = "rate limit does not clear (free tier used up?)"
+                    if rec["status"] == "not_run" and rec["reason"] in ("busy", "rate_limited") and attempts < 3 and not stop_reason:
                         retry.append((cid, kw, sc, rep))
                         if rec["reason"] == "rate_limited":
                             time.sleep(min(90, rec.get("retry_after") or 30))
@@ -357,6 +360,9 @@ def run(args) -> int:
                 todo, attempts = retry, attempts + 1
             if stop_reason:
                 print(f"stopping {model}: {stop_reason}", file=sys.stderr)
+                with path.open("a") as f:
+                    f.write(json.dumps({"tool": tool, "model": model, "case": "*", "rep": 0, "cloud": cloud, "status": "not_run",
+                                        "reason": "stopped: " + stop_reason, "latency_s": 0, "invented": False, "code": None}) + "\n")
                 break
     return 0
 
