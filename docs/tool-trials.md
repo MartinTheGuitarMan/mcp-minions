@@ -288,3 +288,66 @@ page's own citations from each line the same run failed on 7 of 12 lines, becaus
 text that no claim repeats; that is the old "claims leave out what the text says" check, unchanged, and a reason to strip
 citations before calling the tool. The earlier before-counts may have used a different split of the page into lines, so
 the comparison is indicative only.
+
+## Idea evals 2026-10-30: six logged tool ideas
+
+Criteria fixed before anything below was built or run. The rule is the same as above (every idea gets an eval, a pass is
+kept), but the first question is what the idea *is*. A minion tool uses a model. Something that is plain code, with no
+model, and only helps whoever builds or checks the tools, is not a minion: it goes in `scripts/` and stays out of the MCP
+tool list. All six turned out to be plain code (decided below, before building), so none gets a route, an error code or a
+README tool row. The eval still applies: a code tool passes on real inputs from this repo, scored against a result worked
+out another way, and a fail is removed in its own commit with the result kept here.
+
+| idea | model? | home | why |
+|---|---|---|---|
+| `strip_citations` | no | `scripts/strip_citations.py` (function + stdin/stdout) | text surgery on wiki lines before `check_claims`; a regex job. Its value is shown by what `check_claims` does with and without it. |
+| `report_diff` | no | `scripts/report_diff.py` | compares two JSON lines written by `quick_eval.py`; arithmetic. |
+| `trial_compare` | no (it *drives* trials, which use models) | `scripts/trial_compare.py` | diffs two `tool_trials.py` result sets per case; the `run` mode only starts the existing runner in two git worktrees. |
+| `eval_urls` | no (it *scores* `summarize_url`, which uses a model) | `scripts/eval_urls.py`; `eval_summarize_url.py` becomes a thin caller | an eval harness for developers, the page list and key terms come from a file. |
+| `check_url_safe` | no | `scripts/check_url_safe.py` (importable) | reuses `fetch.check_url` and `fetch.address_problem`; syntax and literal-address rules only. |
+| `diff_tests` | no | `scripts/diff_tests.py` | runs pytest, so it executes code: only for trusted in-repo task files. Model-written code must go through the Docker sandbox of the coding bench. |
+
+Security: nothing here adds a read path for minions. `check_url_safe` opens no socket and resolves no name (a test
+makes any socket call fail); it can only say a URL is refused *without* a lookup, never that it is safe to fetch (the
+fetch layer still resolves and pins at fetch time). `fetch.py` is not changed. `eval_urls` calls the existing
+`summarize_url` and nothing else. `diff_tests` is not reachable from the server.
+
+### Pass criteria (fixed first)
+
+Common: real inputs from this repo wherever the tool reads something this repo already produces, invented data otherwise,
+no personal data; at least 12 cases per tool with planted bad inputs the tool must catch; the output compared with a
+result worked out another way (by hand, or by an independent count); no model needed to run the tests.
+
+1. **`strip_citations`**: 14 or more lines in the real wiki shape (`(source: raw/<file>)`, `(sources: ...)`,
+   `(conversation <date>)`, markdown and wiki links, footnote marks, bare urls), every output equal to the expected line,
+   100%. No digit, date or word that is not part of a citation or a link target may change (checked on every case), and the
+   function is idempotent. A parenthesis that is not a citation (`(import day)`, `(2026-03-04)`) stays. Value test, live on
+   `air-qwen` (`sensitive=true`): 8 invented wiki lines, each citing a dated source, checked against an invented source
+   note with and without stripping; with stripping there are 0 "numbers or names of the text dropped" errors, and no more
+   errors in total than without it.
+2. **`report_diff`**: the real accuracy line compared with itself gives no flag; 12 or more planted pairs (made by editing
+   the real line) are flagged exactly: a score drop of 0.10 or more on a tool, any rise in `invented`, a tool that was
+   scored and is not now, a new error code, a partial run, a different answering model set, a changed roster hash (note
+   only), p95 more than twice as slow (note only). An improvement is never a regression. 100% of the pairs, no false flag
+   on the unchanged ones.
+3. **`trial_compare`**: on two real result sets (the `air-qwen` runs of the claims fix, old code against new), the per-case
+   diff and the totals equal a count made independently (a one-off reading of the raw files); planted flips
+   (ok to wrong, wrong to ok, a case missing on one side, a changed status) are all listed. `run` mode: the worktrees and
+   commands are built and cleaned up correctly (tested on a throwaway git repo), and one live run of `check_claims` at the
+   claims-fix parent and at `HEAD` (`air-qwen`, 1 repeat, local) produces a diff the tool prints without error.
+4. **`eval_urls`**: 12 or more *new* real public pages (not the 20 of `eval_summarize_url.py`) with key terms chosen before
+   the run; the harness's PASS/FAIL per page agrees with a by-hand reading of every printed summary (0 disagreements);
+   planted summaries (no key term, an invented number, a call error, a bad page-list file) get the right verdict in tests.
+   The 20-page default list moves to the new script unchanged.
+5. **`check_url_safe`**: 20 or more URLs: real public ones from the lists in this repo (all must come out `ok`, and each
+   must also be refused-free when the fetch layer's own resolution is run on it once, outside the tool), and attack forms
+   (loopback, private, link-local, metadata, `localhost`, `.local`, `.internal`, decimal, hex and octal IP, IPv4-mapped
+   IPv6, credentials in the url, a non-default port, a `file:` scheme) which must all be refused with the reason the fetch
+   layer gives. 100%. A test makes every socket call raise, and the tool still answers.
+6. **`diff_tests`**: on the coding bench's real tasks (`bench/code_tasks.py`, read from its branch, not copied into this
+   repo): every task with a `buggy` version gives verdict `ok` (reference passes all its tests, buggy fails at least one),
+   and every write task checked against a stub gives `ok`; planted bad sets are each caught with the right verdict:
+   tests that pass on the buggy code, a reference that fails, tests that crash at import (no behaviour shown), zero tests,
+   and an endless loop (timeout). 100%.
+
+A fail is removed in its own commit and the result stays here. The prompt-tuning rule does not apply (no prompts).
