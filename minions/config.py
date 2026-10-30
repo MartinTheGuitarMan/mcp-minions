@@ -15,6 +15,9 @@ CONSTRAIN = ("json_schema", "json_object", "none")
 CORE_TOOLS = ("classify", "extract", "summarize")
 OPTIONAL_TOOLS = ("tag", "find_sensitive", "same", "grounded")   # a roster without a model that serves them simply has no route
 TOOLS = CORE_TOOLS + OPTIONAL_TOOLS
+# Trial tools: a roster with no route of their own for them borrows the route of an existing tool (the value here).
+# A route listed under the tool's own name wins. Every entry was added by its own commit (docs/tool-trials.md).
+TRIAL_FALLBACK: dict = {}
 ASK = "ask"   # open questions: only models marked "knowledge" (they passed the hippo test) may serve it
 VOTING_TOOLS = ("classify", "grounded")   # several fast models vote (quorum), a decision model may vote or answer first
 KINDS = ("fast", "reasoning", "decision")   # decision: System One model, voting tools only
@@ -167,7 +170,9 @@ class Roster:
 
     @classmethod
     def single(cls, cfg: Config) -> "Roster":
-        return cls({cfg.name: cfg}, {t: Route((cfg,), None, 1) for t in TOOLS}, cfg.max_file_bytes)
+        routes = {t: Route((cfg,), None, 1) for t in TOOLS}
+        routes.update({t: routes[base] for t, base in TRIAL_FALLBACK.items()})
+        return cls({cfg.name: cfg}, routes, cfg.max_file_bytes)
 
     @classmethod
     def coerce(cls, x) -> "Roster":
@@ -215,8 +220,8 @@ class Roster:
                 # the privacy gate trusts this flag, so a public host must not slip through as local
                 raise BadConfig(f"model {name!r}: {base_url} is not a local address; set \"cloud\": true")
             caps = m.get("caps")
-            if caps is not None and (not isinstance(caps, list) or not set(caps) <= {*TOOLS, ASK}):
-                raise BadConfig(f"model {name!r}: caps must be a list drawn from {[*TOOLS, ASK]}")
+            if caps is not None and (not isinstance(caps, list) or not set(caps) <= {*TOOLS, *TRIAL_FALLBACK, ASK}):
+                raise BadConfig(f"model {name!r}: caps must be a list drawn from {[*TOOLS, *TRIAL_FALLBACK, ASK]}")
             limits = m.get("limits") or {}
             rpm = limits.get("rpm")
             if rpm is not None and (not isinstance(rpm, int) or rpm < 1):
@@ -248,7 +253,8 @@ class Roster:
 
         routes: dict[str, Route] = {}
         has_ask = ASK in raw.get("routes", {}) or any(c.knowledge for c in models.values())
-        for tool in TOOLS + ((ASK,) if has_ask else ()):
+        own = tuple(t for t in TRIAL_FALLBACK if t in raw.get("routes", {}))   # trial tools with a route of their own
+        for tool in TOOLS + own + ((ASK,) if has_ask else ()):
             r = raw.get("routes", {}).get(tool, {})
             fast_names = r.get("fast")
             if fast_names is None:   # route by capability, not by model name
@@ -292,4 +298,7 @@ class Roster:
             if debias is None:   # auto: worth the extra call only when a judge can resolve a mismatch
                 debias = tool == "classify" and len(fast) == 1 and judge is not None
             routes[tool] = Route(fast, judge, quorum, bool(debias) and tool == "classify" and len(fast) == 1, fallback, shortcut)
+        for tool, base in TRIAL_FALLBACK.items():   # a trial tool with no route of its own borrows its base tool's route
+            if tool not in routes and base in routes:
+                routes[tool] = routes[base]
         return cls(models, routes, max_file_bytes, meta)
