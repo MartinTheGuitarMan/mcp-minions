@@ -45,6 +45,7 @@ def record(tool: str, sensitive: bool, started: float, text: str, meta: dict | N
            "shortcut_model": short.get("model"),
            "shortcut_confidence": round(short["confidence"], 4) if short.get("confidence") is not None else None,
            "shortcut_threshold": short.get("threshold"),
+           "shortcut_no_confidence": True if short and short.get("confidence") is None else None,
            "failover": meta.get("failover") or None, "rate_limited": meta.get("rate_limited") or None,
            "busy": meta.get("busy") or None,
            "injection_removed": len(meta.get("injection_removed") or []) or None,
@@ -99,7 +100,8 @@ def _tokens(rows: list) -> dict:
 
 def _confidence(rows: list) -> list | None:
     """The shortcut's confidence per tool and model: spread, and how many calls reached the threshold (and were
-    answered alone). Lines from before confidence was logged, and calls where the model gave none, are counted apart."""
+    answered alone). Without a confidence: `model_gave_none` (the model's reply held no usable number) and `before_logging` (log lines
+    written before confidence was logged at all, so nothing is known about them)."""
     groups: dict = {}
     for r in rows:
         if r.get("shortcut") and r.get("shortcut_model"):
@@ -109,7 +111,9 @@ def _confidence(rows: list) -> list | None:
         conf = sorted(r["shortcut_confidence"] for r in rs if r.get("shortcut_confidence") is not None)
         q = lambda p: conf[min(len(conf) - 1, int(len(conf) * p))] if conf else None
         thresholds = sorted({r["shortcut_threshold"] for r in rs if r.get("shortcut_threshold") is not None})
+        none_given = sum(1 for r in rs if r.get("shortcut_no_confidence"))
         out.append({"tool": tool, "model": model, "calls": len(rs), "without_confidence": len(rs) - len(conf),
+                    "model_gave_none": none_given, "before_logging": len(rs) - len(conf) - none_given,
                     "min": conf[0] if conf else None, "p10": q(0.1), "p50": q(0.5), "p90": q(0.9),
                     "max": conf[-1] if conf else None,
                     "threshold": thresholds[0] if len(thresholds) == 1 else (thresholds or None),   # a list if it changed

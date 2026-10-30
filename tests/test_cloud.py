@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 
@@ -397,7 +398,7 @@ def test_shortcut_confidence_is_logged_and_reported(fake, tmp_path, monkeypatch)
     assert [row["shortcut_confidence"] for row in rows] == confs
     assert {row["shortcut_threshold"] for row in rows} == {0.95}
     (rep,) = tools.report()["shortcut_confidence"]
-    assert rep == {"tool": "classify", "model": "d", "calls": 5, "without_confidence": 0, "min": 0.62, "p10": 0.62,
+    assert rep == {"tool": "classify", "model": "d", "calls": 5, "without_confidence": 0, "model_gave_none": 0, "before_logging": 0, "min": 0.62, "p10": 0.62,
                    "p50": 0.91, "p90": 0.97, "max": 0.97, "threshold": 0.95, "reached_threshold": 2, "answered": 2}
 
 
@@ -410,3 +411,13 @@ def test_report_counts_shortcut_calls_without_a_confidence(fake, tmp_path, monke
     tools.classify(r, "x", LABELS, sensitive=False)
     (rep,) = tools.report()["shortcut_confidence"]
     assert rep["calls"] == 1 and rep["without_confidence"] == 1 and rep["p50"] is None and rep["reached_threshold"] == 0
+    assert rep["model_gave_none"] == 1 and rep["before_logging"] == 0
+
+
+def test_report_tells_old_log_lines_from_a_model_that_gave_no_confidence(fake, tmp_path, monkeypatch):
+    log = tmp_path / "calls.jsonl"
+    monkeypatch.setenv("MINION_LOG", str(log))
+    log.write_text(json.dumps({"ts": round(time.time()), "tool": "classify", "sensitive": True, "chars": 5, "latency_s": 1.0,
+                               "shortcut": "escalated", "shortcut_model": "d"}) + "\n")   # written before confidence was logged
+    (rep,) = tools.report()["shortcut_confidence"]
+    assert rep["without_confidence"] == 1 and rep["before_logging"] == 1 and rep["model_gave_none"] == 0
