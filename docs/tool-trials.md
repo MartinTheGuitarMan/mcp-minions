@@ -421,3 +421,18 @@ A fail is removed in its own commit and the result stays here. The prompt-tuning
   reads it as octal `127.0.0.1`: the tool is stricter than the fetch layer there, which is the safe direction.
 - `ok` means only "no rule refuses it without a lookup"; the result says `resolved: false` and, for names, that the fetch
   layer still resolves and pins. Nothing widens what minions can read.
+
+### Result: `diff_tests`: PASS (stays in `scripts/`; wire it into the coding bench, not the server)
+
+- **Real tasks:** `bench/code_tasks.py` of the coding-bench branch (read in place, nothing copied; commit `d497f51`), 25 tasks:
+  the 5 with a buggy version (`fix_median`, `fix_chunked`, `fix_unique_bucket`, `fix_top_words`, `cx_inventory_fix`) and
+  20 checked against a generated stub. 25/25 `ok`: the reference passes every test and the buggy or stub version fails at
+  least one. The reference's pytest count equals the bench's own `n_tests` for all 25 (independent regex count).
+- **Planted bad sets** (15 tests): tests that pass on the buggy code, a failing reference, buggy code that does not import,
+  a name missing from the buggy code, zero tests, an endless loop in the buggy code and in the reference, the untrusted
+  default refused, no secrets in the child's environment, a throwaway `HOME`: each with the right verdict.
+- **Finding for the bench:** a do-nothing stub already scores on the regex tasks, because their negative tests pass for a
+  never-matching pattern: `re_hex_color` 3 of 4, `re_ipv4` 4 of 5, `re_dates_in_text` 2 of 8. Their pass@1 has a floor of
+  those shares; a model's score on them should be read above that line.
+- **Safety:** it runs Python, so `--trusted` is mandatory and it is not a sandbox. Model-written code must keep going through
+  `bench/sandbox.py` only. Not exposed by the server.
