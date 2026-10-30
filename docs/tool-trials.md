@@ -2,7 +2,7 @@
 
 Rule: every tool idea goes straight to an eval, and a pass puts it in the tool list. This file fixes the pass
 criteria **before anything was run**, then holds the results. Five candidates: `check_claims`, `commit_message`,
-`dedupe`, `score`, `translate`. Each is one commit; a failed one is removed in its own commit and its result stays here.
+`score`, `translate`. Each is one commit; a failed one is removed in its own commit and its result stays here.
 
 ## What each tool does and what the code checks
 
@@ -18,6 +18,8 @@ Each tool has a route in `config.py` (`TRIAL_FALLBACK`): a roster with no route 
 route of `extract` (`check_claims`, `dedupe`, `score`) or `summarize` (`commit_message`, `translate`).
 No new error codes: the checks raise the existing `MINION_NOT_IN_SOURCE`, `MINION_INVENTED`, `MINION_TOO_LONG`
 and `MINION_SCHEMA`.
+
+> **Outcome: `dedupe` failed and its code was removed in its own commit** (results below). The other four passed.
 
 ## Pass criteria (fixed before the first run)
 

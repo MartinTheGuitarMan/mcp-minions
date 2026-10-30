@@ -126,33 +126,6 @@ def test_commit_message_borrows_the_summarize_route():
     assert Roster.from_dict(raw).route("commit_message").fast[0].name == "b"
 
 
-# ---------------------------------------------------------------- dedupe
-ITEMS = [{"id": "a", "text": "Meeting at 3 pm."}, {"id": "b", "text": "Lunch at noon."}, {"id": "c", "text": "The meeting is at 3 pm."}]
-
-
-def test_dedupe_good_reply_is_put_in_input_order(fake, cfg):
-    reply(fake, groups=[["b"], ["c", "a"]])
-    assert tools.dedupe(cfg, ITEMS) == {"groups": [["a", "c"], ["b"]]}
-    sent = fake.requests[0][1]["response_format"]["json_schema"]["schema"]
-    assert sent["properties"]["groups"]["items"]["items"]["enum"] == ["a", "b", "c"]
-
-
-@pytest.mark.parametrize("groups", [[["a", "c"]], [["a", "c"], ["b", "a"]], [["a", "c"], ["b"], ["z"]],
-                                    [["a", "c"], ["b"], []], [["a", "c"], ["b", "b"]]])
-def test_dedupe_catches_bad_partitions(fake, cfg, groups):
-    reply(fake, groups=groups)
-    with pytest.raises(SchemaError):
-        tools.dedupe(cfg, ITEMS)
-
-
-def test_dedupe_input_checks(cfg):
-    for items in ([], [{"id": "a", "text": "x"}, {"id": "a", "text": "y"}], [{"id": "a"}]):
-        with pytest.raises(BadInput):
-            tools.dedupe(cfg, items)
-    with pytest.raises(BadInput):
-        tools.dedupe(cfg, [{"id": str(n), "text": "x"} for n in range(51)])
-
-
 # ---------------------------------------------------------------- score
 def test_score_good_reply(fake, cfg):
     reply(fake, score=4, quote="Please send")
@@ -249,8 +222,6 @@ def test_every_trial_tool_is_safe_under_concurrent_calls(fake, cfg):
             return json.dumps({"score": 1 + n % 5, "quote": f"item N={n}"})
         if "Translate the data" in user:
             return json.dumps({"translation": f"Report N={n}."})
-        if "Group the ids" in user:
-            return json.dumps({"groups": [["a"], ["b"]] if n % 2 else [["b", "a"]]})
         return json.dumps({"claims": [{"claim": f"Claim N={n}.", "supported": True, "quote": f"N={n}"}]})
 
     fake.dynamic = answer
@@ -259,13 +230,11 @@ def test_every_trial_tool_is_safe_under_concurrent_calls(fake, cfg):
     def one(n):
         return (tools.check_claims(cfg, f"Claim N={n}.", f"The source says N={n} here."),
                 tools.commit_message(cfg, diff),
-                tools.dedupe(cfg, [{"id": "a", "text": f"N={n} x"}, {"id": "b", "text": "y"}]),
                 tools.score(cfg, f"item N={n}", "length"),
                 tools.translate(cfg, f"Rapport N={n}.", "en"))
 
     with ThreadPoolExecutor(6) as ex:
         results = list(ex.map(one, range(1, 25)))
-    for n, (c, m, d, s, t) in zip(range(1, 25), results):
+    for n, (c, m, s, t) in zip(range(1, 25), results):
         assert c["claims"][0]["claim"] == f"Claim N={n}." and m["subject"].startswith("Fix thing")
-        assert d["groups"] == ([["a"], ["b"]] if n % 2 else [["a", "b"]])
         assert s["score"] == 1 + n % 5 and t["translation"] == f"Report N={n}."

@@ -617,25 +617,6 @@ def commit_message(cfg, diff: str, hint: str = "", sensitive: bool = True) -> di
                sensitive, check=commit_msg.make_check(files))
 
 
-def dedupe(cfg, items: list, hint: str = "", sensitive: bool = True) -> dict:
-    """Group near-identical texts among up to 50 {id, text} items. Returns {"groups": [[id, ...], ...]}, groups and
-    ids in input order; every id is in exactly one group (checked in code, MINION_SCHEMA otherwise)."""
-    from . import dedupe as dd
-    pairs = _check_items(items)
-    if sum(len(t) for _, t in pairs) > 12000:
-        raise BadInput("the items hold more than 12000 characters in all; pass fewer or shorter ones")
-    ids = [i for i, _ in pairs]
-    task = dd.TASK + (f" {hint}" if hint else "")
-
-    def after(out, meta):   # groups in input order, ids inside a group in input order
-        pos = {i: n for n, i in enumerate(ids)}
-        groups = sorted((sorted(g, key=pos.get) for g in out["groups"]), key=lambda g: pos[g[0]])
-        return {"groups": groups}
-
-    return _go(Roster.coerce(cfg), "dedupe", lambda order=None: (task, dd.schema(ids)), dd.render(pairs), "groups", None,
-               sensitive, after=after, check=dd.make_check(ids))
-
-
 def score(cfg, text: str, criterion: str, hint: str = "", sensitive: bool = True) -> dict:
     """Rate text 1 to 5 on a criterion. Returns {"score": int, "quote": str}: the score is an integer in range (a
     bool or a float is a schema failure) and the quote occurs in the text (MINION_NOT_IN_SOURCE)."""

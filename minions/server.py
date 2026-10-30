@@ -111,14 +111,6 @@ def commit_message(diff: str, hint: str = "", sensitive: bool = True) -> dict:
 
 @mcp.tool()
 @guarded
-def dedupe(items: list[dict], hint: str = "", sensitive: bool = True) -> dict:
-    """Group near-identical texts among up to 50 items [{id, text}]. Returns {"groups": [[id, ...], ...]}: every id is
-    in exactly one group (checked in code). Texts that differ in a number, name, date or negation are not grouped."""
-    return tools.dedupe(Roster.from_env(), items, hint, sensitive)
-
-
-@mcp.tool()
-@guarded
 def score(text: str, criterion: str, hint: str = "", sensitive: bool = True) -> dict:
     """Rate text from 1 to 5 on a criterion (1 = not at all, 5 = fully). Returns {"score": int, "quote": str}: the
     score is an integer in range and the quote, the passage that supports it, is checked in code to occur in the text."""
