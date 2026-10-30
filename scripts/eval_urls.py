@@ -122,6 +122,7 @@ def main(argv: list[str] | None = None, pages=None) -> int:
     ap.add_argument("--pages", help="JSON file with the page list (default: the built-in 20 pages)")
     ap.add_argument("--max-words", type=int, default=80)
     ap.add_argument("--only", type=int, help="run only the first N pages")
+    ap.add_argument("--full", action="store_true", help="print each whole summary and the key terms it hit, not 140 characters")
     ap.add_argument("--public", action="store_true", help="sensitive=false: cloud models on the route may answer too")
     a = ap.parse_args(argv)
     try:
@@ -138,7 +139,9 @@ def main(argv: list[str] | None = None, pages=None) -> int:
         r = score_page(roster, url, keys, a.max_words, sensitive=not a.public)
         rows.append(r)
         print(f"{'PASS' if r['ok'] else 'FAIL'}  {r['latency_s']:5.1f}s  {url}\n      "
-              f"{r['verdict'] if not r['ok'] else r['summary'][:140]}", flush=True)
+              f"{r['verdict'] if not r['ok'] else (r['summary'] if a.full else r['summary'][:140])}", flush=True)
+        if a.full and r["summary"]:
+            print("      hit: " + (", ".join(k for k in keys if k.lower() in r["summary"].lower()) or "-"), flush=True)
     passed = sum(r["ok"] for r in rows)
     lat = sorted(r["latency_s"] for r in rows)
     calls = [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
