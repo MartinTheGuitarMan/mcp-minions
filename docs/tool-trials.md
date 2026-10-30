@@ -393,3 +393,15 @@ A fail is removed in its own commit and the result stays here. The prompt-tuning
   removed. The two misses are `h09` and `h13`, as before.
 - Not verified: the real data has no flip, so "lists a flip" rests on the planted tests; the live run has `--repeats 1`, so
   its stability column says nothing.
+
+### Result: `eval_urls`: PASS (stays in `scripts/`)
+
+- **12 new real public pages** (`evals/url_pages_2.json`, key terms committed before the run), `air-qwen` through the
+  `summarize` route, `sensitive=true`. Run 1: 12/12 (p50 14.3 s, p95 42.7 s, 1 repair fired). Run 2 with `--full`: 12/12
+  (p50 9.4 s, p95 24.8 s, 1 repair). Latency is reported only.
+- **By hand:** all 12 whole summaries read against the rule (a key term present, nothing invented): 0 disagreements. One
+  limit seen: the key-term rule cannot see that two summaries cover only a slice of the page (`Bridge` is about early aqueducts
+  and bridges; `python.org/about` is the releases and events list). The harness passes both because they contain a key term;
+  a quality bar would need a different check.
+- **Planted** (20 tests): no key term, an invented number, an invented name, a minion error, a non-minion exception, six
+  bad page-list files, the built-in 20 unchanged and syntax-valid, and `eval_summarize_url.py` now a thin caller.
