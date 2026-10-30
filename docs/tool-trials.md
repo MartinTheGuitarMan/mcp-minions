@@ -447,6 +447,6 @@ Not started here: `write_code` (the coding bench is evaluating it) and `link_ent
   exists, not that it entails the claim"). Not evaluated.
 - **`physics_check`** (logged 2026-10-29, SkyLink daily pass): "check a label against a stream's kind signatures (duration,
   magnitude)". The log does not say what the signatures are, which stream kinds exist or what a label is; those live in the
-  `skylink-station` repo. Not started, as instructed when the log is unclear. Needs its owner to say what the signatures are
+  SkyLink repo. Not started, as instructed when the log is unclear. Needs its owner to say what the signatures are
   before an eval can be written. It may turn out to be plain code (a table of ranges), which would put it in that repo and not
   here.
