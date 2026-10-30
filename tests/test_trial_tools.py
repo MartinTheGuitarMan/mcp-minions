@@ -124,3 +124,30 @@ def test_commit_message_borrows_the_summarize_route():
     raw = {"models": {"a": {"backend": "ollama", "model": "m1"}, "b": {"backend": "ollama", "model": "m2"}},
            "routes": {"summarize": {"fast": ["b"]}}}
     assert Roster.from_dict(raw).route("commit_message").fast[0].name == "b"
+
+
+# ---------------------------------------------------------------- dedupe
+ITEMS = [{"id": "a", "text": "Meeting at 3 pm."}, {"id": "b", "text": "Lunch at noon."}, {"id": "c", "text": "The meeting is at 3 pm."}]
+
+
+def test_dedupe_good_reply_is_put_in_input_order(fake, cfg):
+    reply(fake, groups=[["b"], ["c", "a"]])
+    assert tools.dedupe(cfg, ITEMS) == {"groups": [["a", "c"], ["b"]]}
+    sent = fake.requests[0][1]["response_format"]["json_schema"]["schema"]
+    assert sent["properties"]["groups"]["items"]["items"]["enum"] == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize("groups", [[["a", "c"]], [["a", "c"], ["b", "a"]], [["a", "c"], ["b"], ["z"]],
+                                    [["a", "c"], ["b"], []], [["a", "c"], ["b", "b"]]])
+def test_dedupe_catches_bad_partitions(fake, cfg, groups):
+    reply(fake, groups=groups)
+    with pytest.raises(SchemaError):
+        tools.dedupe(cfg, ITEMS)
+
+
+def test_dedupe_input_checks(cfg):
+    for items in ([], [{"id": "a", "text": "x"}, {"id": "a", "text": "y"}], [{"id": "a"}]):
+        with pytest.raises(BadInput):
+            tools.dedupe(cfg, items)
+    with pytest.raises(BadInput):
+        tools.dedupe(cfg, [{"id": str(n), "text": "x"} for n in range(51)])

@@ -111,6 +111,14 @@ def commit_message(diff: str, hint: str = "", sensitive: bool = True) -> dict:
 
 @mcp.tool()
 @guarded
+def dedupe(items: list[dict], hint: str = "", sensitive: bool = True) -> dict:
+    """Group near-identical texts among up to 50 items [{id, text}]. Returns {"groups": [[id, ...], ...]}: every id is
+    in exactly one group (checked in code). Texts that differ in a number, name, date or negation are not grouped."""
+    return tools.dedupe(Roster.from_env(), items, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
 def classify_batch(items: list[dict], labels: list[str], hint: str = "", sensitive: bool = True,
                    descriptions: dict[str, str] | None = None) -> dict:
     """classify for up to 50 items [{id, text}]. Returns one result per id ({id, label} or {id, error: {code,
