@@ -266,3 +266,54 @@ def test_every_trial_tool_is_safe_under_concurrent_calls(fake, cfg):
     for n, (c, m, s, t) in zip(range(1, 25), results):
         assert c["claims"][0]["claim"] == f"Claim N={n}." and m["subject"].startswith("Fix thing")
         assert s["score"] == 1 + n % 5 and t["translation"] == f"Report N={n}."
+
+
+# ---------------------------------------------------------------- check_claims: number formats the model calls unsupported
+_TABLE = "Photo scan\nTotal files: 10174\nWith GPS: 1712\nsame day as file date: 10174\nMissing title: 38\nUptime: 99.2%"
+
+
+@pytest.mark.parametrize("text", ["1,712 files have GPS.", "10,174 are the same day as the file date.",
+                                  "38 files have no title.", "Uptime was 99.2 percent."])
+def test_check_claims_recheck_upgrades_a_true_claim_the_model_called_unsupported(fake, cfg, text):
+    reply(fake, claims=[claim(text, False)])
+    c = tools.check_claims(cfg, text, _TABLE)["claims"][0]
+    assert c["supported"] is True and c["flag"] == "rechecked_in_code" and c["quote"] in _TABLE
+
+
+@pytest.mark.parametrize("text", ["1,713 files have GPS.", "2,171 files have GPS.", "38 files have a title.",
+                                  "Uptime was 99.3 percent.", "17 files have GPS.", "1,712 files have no GPS.",
+                                  "1,712 cats live in Velmar.", "The scan found 10,174 files and 500 have GPS."])
+def test_check_claims_recheck_never_upgrades_a_wrong_number_or_meaning(fake, cfg, text):
+    reply(fake, claims=[claim(text, False)])
+    c = tools.check_claims(cfg, text, _TABLE)["claims"][0]
+    assert c["supported"] is False and "flag" not in c
+
+
+def test_check_claims_recheck_leaves_claims_without_numbers_alone(fake, cfg):
+    reply(fake, claims=[claim("Files have GPS.", False)])
+    assert tools.check_claims(cfg, "Files have GPS.", _TABLE)["claims"][0]["supported"] is False
+
+
+# ---------------------------------------------------------------- check_claims: claims that are not in the text
+def test_check_claims_drops_claims_that_come_from_the_source_not_the_text(fake, cfg):
+    text = "The export lists the LUNA Sessions folder."
+    src = "LUNA Sessions folders were empty shells. Folder list: LUNA Sessions."
+    reply(fake, claims=[claim("The export lists the LUNA Sessions folder.", True, "Folder list: LUNA Sessions"),
+                        claim("LUNA Sessions folders were empty shells.", True, "LUNA Sessions folders were empty shells")])
+    out = tools.check_claims(cfg, text, src)
+    assert [c["claim"] for c in out["claims"]] == [text]
+    assert out["dropped_not_in_text"] == ["LUNA Sessions folders were empty shells."]
+
+
+def test_check_claims_keeps_condensed_and_reworded_claims(fake, cfg):
+    text = "About 8,400 people came to the festival in Velmar, and entry was free."
+    reply(fake, claims=[claim("About 8,400 people came to the festival.", True, "drew about 8,400 people"),
+                        claim("The festival was in Velmar.", True, "in Velmar"), claim("Entry was free.", True, "Entry was free")])
+    out = tools.check_claims(cfg, text, SRC)
+    assert len(out["claims"]) == 3 and "dropped_not_in_text" not in out
+
+
+def test_check_claims_all_claims_not_in_text_is_a_schema_failure(fake, cfg):
+    reply(fake, claims=[claim("Velmar has a harbour museum.", False)])
+    with pytest.raises(SchemaError):
+        tools.check_claims(cfg, "Entry was free.", SRC)
