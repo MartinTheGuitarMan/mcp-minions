@@ -103,6 +103,14 @@ def check_claims(text: str, source: str, hint: str = "", sensitive: bool = True)
 
 @mcp.tool()
 @guarded
+def commit_message(diff: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Draft a git commit message from a diff (at most 12000 characters). Returns {"subject", "body"}: the subject is
+    at most 72 characters, imperative, without a final period, and every file the message names is in the diff."""
+    return tools.commit_message(Roster.from_env(), diff, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
 def classify_batch(items: list[dict], labels: list[str], hint: str = "", sensitive: bool = True,
                    descriptions: dict[str, str] | None = None) -> dict:
     """classify for up to 50 items [{id, text}]. Returns one result per id ({id, label} or {id, error: {code,

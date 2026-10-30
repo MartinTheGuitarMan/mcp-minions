@@ -5,7 +5,7 @@ import pytest
 
 from minions import tools
 from minions.config import Roster
-from minions.errors import BadInput, Invented, NotInSource, SchemaError
+from minions.errors import BadInput, EmptyValue, Invented, NotInSource, SchemaError, TooLong
 
 
 def reply(fake, **obj):
@@ -76,3 +76,51 @@ def test_check_claims_borrows_the_extract_route():
     assert r.route("check_claims") is r.route("extract") and r.route("check_claims").fast[0].name == "b"
     raw["routes"]["check_claims"] = {"fast": ["a"]}
     assert Roster.from_dict(raw).route("check_claims").fast[0].name == "a"
+
+
+# ---------------------------------------------------------------- commit_message
+DIFF = ("diff --git a/src/pager.py b/src/pager.py\nindex 1..2 100644\n--- a/src/pager.py\n+++ b/src/pager.py\n"
+        "@@ -1,2 +1,2 @@\n-    return items[a:b + 1]\n+    return items[a:b]\n")
+
+
+def test_commit_message_good_reply(fake, cfg):
+    reply(fake, subject="Fix off-by-one in page slicing", body="The end index was one too high in src/pager.py.")
+    out = tools.commit_message(cfg, DIFF)
+    assert out["subject"] == "Fix off-by-one in page slicing" and "pager.py" in out["body"]
+
+
+@pytest.mark.parametrize("subject,exc", [
+    ("", EmptyValue), ("Fix " + "x" * 80, TooLong), ("Fixed the slicing", SchemaError), ("Fixes the slicing", SchemaError),
+    ("Fixing the slicing", SchemaError), ("Fix the slicing.", SchemaError), ("Fix slicing\nand more", SchemaError)])
+def test_commit_message_catches_bad_subjects(fake, cfg, subject, exc):
+    reply(fake, subject=subject, body="")
+    with pytest.raises(exc):
+        tools.commit_message(cfg, DIFF)
+
+
+def test_commit_message_catches_a_file_that_is_not_in_the_diff(fake, cfg):
+    reply(fake, subject="Fix off-by-one in src/paging.py", body="")
+    with pytest.raises(Invented):
+        tools.commit_message(cfg, DIFF)
+    reply(fake, subject="Fix off-by-one", body="Also touches utils/dates.py.")
+    with pytest.raises(Invented):
+        tools.commit_message(cfg, DIFF)
+
+
+def test_commit_message_accepts_a_file_by_name_or_path(fake, cfg):
+    for text in ("pager.py", "src/pager.py"):
+        reply(fake, subject="Fix off-by-one", body=f"See {text}.")
+        tools.commit_message(cfg, DIFF)
+
+
+def test_commit_message_input_checks(cfg):
+    with pytest.raises(BadInput):
+        tools.commit_message(cfg, "just some text")
+    with pytest.raises(BadInput):
+        tools.commit_message(cfg, DIFF + "+" + "x" * 13000)
+
+
+def test_commit_message_borrows_the_summarize_route():
+    raw = {"models": {"a": {"backend": "ollama", "model": "m1"}, "b": {"backend": "ollama", "model": "m2"}},
+           "routes": {"summarize": {"fast": ["b"]}}}
+    assert Roster.from_dict(raw).route("commit_message").fast[0].name == "b"

@@ -598,3 +598,14 @@ def check_claims(cfg, text: str, source: str, hint: str = "", sensitive: bool = 
     return _go(Roster.coerce(cfg), "check_claims", lambda order=None: (claims.TASK + (f" {hint}" if hint else ""),
                                                                        claims.SCHEMA), data, "claims", None, sensitive,
                check=check)
+
+
+def commit_message(cfg, diff: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Draft {"subject", "body"} for a git diff. The subject is at most 72 characters, imperative, without a final
+    period; every file the message names is in the diff (MINION_TOO_LONG, MINION_INVENTED, MINION_SCHEMA)."""
+    from . import commit_msg
+    _check_text(diff)
+    files = commit_msg.check_diff(diff)
+    return _go(Roster.coerce(cfg), "commit_message", lambda order=None: (commit_msg.TASK + (f" {hint}" if hint else ""),
+                                                                         commit_msg.SCHEMA), diff, "commit", None,
+               sensitive, check=commit_msg.make_check(files))
