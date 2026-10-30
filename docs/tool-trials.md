@@ -33,7 +33,11 @@ A tool passes when a local model (`sensitive=true`), on the tool's default route
    facts (a number or name that is not in the source). Counted on what is *returned*; replies the code check refused are
    counted separately ("refused").
 3. **The code check catches planted bad output**, proven in `tests/test_trial_tools.py`.
-4. **p95 under 60 s per call** on the local model.
+4. ~~**p95 under 60 s per call** on the local model.~~ **Dropped 2026-10-30** (Martin: slow is fine as long as work can
+   run in parallel). Latency (p50, p95) is reported only. A call that times out still counts as a failure.
+5. Added 2026-10-30: each tool is shown to be safe under concurrent calls on the same route (`tests/test_trial_tools.py`,
+   threads against the fake backend, plus a live check, see Results). Route advice prefers the better score over the
+   faster model.
 
 Procedure: the route's first model is tried first; if the tool fails, one other local model; the model that passed
 is recorded. The prompt may be tuned against the set **at most once**; if so it is stated in the results.
@@ -42,7 +46,7 @@ a limit). Calls from the same model run one after another.
 
 ## Model-fit eval (added before the first run)
 
-Beyond the pass criteria above, every tool's set is run against every usable roster model, **3 repeats per case**, one
+Beyond the pass criteria above (criterion 4 as it was originally written is kept above, struck through), every tool's set is run against every usable roster model, **3 repeats per case**, one
 model pinned at a time through a throwaway in-memory roster built from a copy of the roster file (the roster itself is
 not changed; the file is only read).
 

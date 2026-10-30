@@ -233,3 +233,39 @@ def test_commit_message_may_mention_a_directory_but_not_an_unknown_file(fake, cf
 def test_translate_accepts_plural_weekdays(fake, cfg):
     reply(fake, translation="The train does not run on Sundays.")
     tools.translate(cfg, "Tåget går inte på söndagar.", "en")
+
+
+# ---------------------------------------------------------------- concurrency: two or more calls at once on one route
+def test_every_trial_tool_is_safe_under_concurrent_calls(fake, cfg):
+    """Each call must get its own answer back and be checked against its own input (no shared state between calls)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def answer(body):
+        user = body["messages"][-1]["content"]
+        n = int(__import__("re").search(r"N=(\d+)", user).group(1))
+        if "git commit message" in user:
+            return json.dumps({"subject": f"Fix thing {n}", "body": ""})
+        if "Rate the data" in user:
+            return json.dumps({"score": 1 + n % 5, "quote": f"item N={n}"})
+        if "Translate the data" in user:
+            return json.dumps({"translation": f"Report N={n}."})
+        if "Group the ids" in user:
+            return json.dumps({"groups": [["a"], ["b"]] if n % 2 else [["b", "a"]]})
+        return json.dumps({"claims": [{"claim": f"Claim N={n}.", "supported": True, "quote": f"N={n}"}]})
+
+    fake.dynamic = answer
+    diff = DIFF.replace("a:b", "a:b N=0")
+
+    def one(n):
+        return (tools.check_claims(cfg, f"Claim N={n}.", f"The source says N={n} here."),
+                tools.commit_message(cfg, diff),
+                tools.dedupe(cfg, [{"id": "a", "text": f"N={n} x"}, {"id": "b", "text": "y"}]),
+                tools.score(cfg, f"item N={n}", "length"),
+                tools.translate(cfg, f"Rapport N={n}.", "en"))
+
+    with ThreadPoolExecutor(6) as ex:
+        results = list(ex.map(one, range(1, 25)))
+    for n, (c, m, d, s, t) in zip(range(1, 25), results):
+        assert c["claims"][0]["claim"] == f"Claim N={n}." and m["subject"].startswith("Fix thing")
+        assert d["groups"] == ([["a"], ["b"]] if n % 2 else [["a", "b"]])
+        assert s["score"] == 1 + n % 5 and t["translation"] == f"Report N={n}."
