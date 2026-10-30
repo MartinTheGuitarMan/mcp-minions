@@ -436,3 +436,17 @@ A fail is removed in its own commit and the result stays here. The prompt-tuning
   those shares; a model's score on them should be read above that line.
 - **Safety:** it runs Python, so `--trusted` is mandatory and it is not a sandbox. Model-written code must keep going through
   `bench/sandbox.py` only. Not exposed by the server.
+
+### Logged ideas still without an eval (from the fit log, 2026-10-30)
+
+Not started here: `write_code` (the coding bench is evaluating it) and `link_entities` (failed its fresh set). Still open:
+
+- **grounded relevance check** (logged 2026-10-25): a decision model confirms the quoted passage actually supports the claim,
+  not only that the quote exists. Model-based, so it would need the full bar above (12 or more invented cases, 90%, 0 invented,
+  planted bad output caught, a real-style set). It overlaps with the known limit of `check_claims` ("proves that the quote
+  exists, not that it entails the claim"). Not evaluated.
+- **`physics_check`** (logged 2026-10-29, SkyLink daily pass): "check a label against a stream's kind signatures (duration,
+  magnitude)". The log does not say what the signatures are, which stream kinds exist or what a label is; those live in the
+  `skylink-station` repo. Not started, as instructed when the log is unclear. Needs its owner to say what the signatures are
+  before an eval can be written. It may turn out to be plain code (a table of ranges), which would put it in that repo and not
+  here.
