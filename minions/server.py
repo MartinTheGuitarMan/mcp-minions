@@ -94,6 +94,39 @@ def grounded(claim: str, source: str, hint: str = "", sensitive: bool = True) ->
 
 @mcp.tool()
 @guarded
+def check_claims(text: str, source: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Split text into factual claims and mark each supported or not against source. Returns {"claims": [{claim,
+    supported, quote}]}. A supported claim carries a quote copied from the source (checked in code) and may use only
+    numbers and names the source has; a claim of the text that the model left out fails the call."""
+    return tools.check_claims(Roster.from_env(), text, source, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
+def commit_message(diff: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Draft a git commit message from a diff (at most 12000 characters). Returns {"subject", "body"}: the subject is
+    at most 72 characters, imperative, without a final period, and every file the message names is in the diff."""
+    return tools.commit_message(Roster.from_env(), diff, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
+def score(text: str, criterion: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Rate text from 1 to 5 on a criterion (1 = not at all, 5 = fully). Returns {"score": int, "quote": str}: the
+    score is an integer in range and the quote, the passage that supports it, is checked in code to occur in the text."""
+    return tools.score(Roster.from_env(), text, criterion, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
+def translate(text: str, target: str = "en", hint: str = "", sensitive: bool = True) -> dict:
+    """Translate Swedish to English (target "en") or English to Swedish (target "sv"). Returns {"translation": str}.
+    Every number and capitalised name of the source must survive and none may be added; checked in code."""
+    return tools.translate(Roster.from_env(), text, target, hint, sensitive)
+
+
+@mcp.tool()
+@guarded
 def classify_batch(items: list[dict], labels: list[str], hint: str = "", sensitive: bool = True,
                    descriptions: dict[str, str] | None = None) -> dict:
     """classify for up to 50 items [{id, text}]. Returns one result per id ({id, label} or {id, error: {code,

@@ -11,7 +11,8 @@ import time
 
 from . import calllog, engine, fetch, gitdiff, lifecycle, manage, ratelimit, router, tokens, values
 from .config import ASK, Roster
-from .errors import BadConfig, Invented, BadInput, Busy, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
+from .errors import (BadConfig, BadInput, Busy, Invented, MinionDown, MinionError, NoQuorum, NotInSource, PrivacyRefused,
+                     RateLimited, SchemaError)
 
 
 def read_text_file(cfg, path: str) -> str:
@@ -614,3 +615,69 @@ def load_model(cfg, name: str) -> dict:
 def unload_model(cfg, name: str) -> dict:
     """Unload a managed model that minions itself loaded."""
     return manage.unload(Roster.coerce(cfg), name)
+
+
+def _quote_in(quote: str, source: str) -> bool:
+    """_quote_found, ignoring punctuation the model put around the quote (a closing full stop, quotation marks)."""
+    return _quote_found(quote.strip().strip(".,;:!?\"'\u201c\u201d\u2018\u2019()[]").strip(), source)
+
+
+def check_claims(cfg, text: str, source: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Split text into claims and mark each supported or not against source. Returns {"claims": [{claim, supported,
+    quote}]}. A supported claim needs a quote found in the source; a claim with a number or name the source lacks
+    cannot be supported (MINION_NOT_IN_SOURCE, MINION_INVENTED); a claim of the text that was left out is a schema
+    failure."""
+    from . import claims
+    _check_text(text)
+    _check_text(source)
+    if len(text) > 6000 or len(source) > 12000:
+        raise BadInput("text is limited to 6000 characters and source to 12000")
+    clean = lambda t: t.replace("=====", "== ==")
+    data = f"=====TEXT=====\n{clean(text)}\n=====SOURCE=====\n{clean(source)}"
+    check = claims.make_check(text, source, _quote_in)
+    return _go(Roster.coerce(cfg), "check_claims", lambda order=None: (claims.TASK + (f" {hint}" if hint else ""),
+                                                                       claims.SCHEMA), data, "claims", None, sensitive,
+               check=check)
+
+
+def commit_message(cfg, diff: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Draft {"subject", "body"} for a git diff. The subject is at most 72 characters, imperative, without a final
+    period; every file the message names is in the diff (MINION_TOO_LONG, MINION_INVENTED, MINION_SCHEMA)."""
+    from . import commit_msg
+    _check_text(diff)
+    files = commit_msg.check_diff(diff)
+    return _go(Roster.coerce(cfg), "commit_message", lambda order=None: (commit_msg.TASK + (f" {hint}" if hint else ""),
+                                                                         commit_msg.SCHEMA), diff, "commit", None,
+               sensitive, check=commit_msg.make_check(files))
+
+
+def score(cfg, text: str, criterion: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Rate text 1 to 5 on a criterion. Returns {"score": int, "quote": str}: the score is an integer in range (a
+    bool or a float is a schema failure) and the quote occurs in the text (MINION_NOT_IN_SOURCE)."""
+    from . import scoring
+    _check_text(text)
+    if not isinstance(criterion, str) or not criterion.strip() or len(criterion) > 300:
+        raise BadInput("criterion must be a non-empty string of at most 300 characters")
+
+    def check(obj):
+        if isinstance(obj["score"], bool) or not isinstance(obj["score"], int) or not 1 <= obj["score"] <= 5:
+            raise SchemaError(f"score must be an integer from 1 to 5, got {obj['score']!r}", str(obj)[:200])
+        if not _quote_in(obj["quote"], text):
+            raise NotInSource(f"the quote {obj['quote'][:60]!r} is not in the text", str(obj)[:200])
+
+    return _go(Roster.coerce(cfg), "score", lambda order=None: (scoring.task(criterion.strip()) + (f" {hint}" if hint else ""),
+                                                               scoring.SCHEMA), text, "score", None, sensitive, check=check)
+
+
+def translate(cfg, text: str, target: str = "en", hint: str = "", sensitive: bool = True) -> dict:
+    """Swedish to English (target "en") or English to Swedish (target "sv"). Returns {"translation": str}. Every
+    number and capitalised name of the source must survive and none may be added (MINION_NOT_IN_SOURCE,
+    MINION_INVENTED); a translation far longer or shorter than the source is MINION_TOO_LONG."""
+    from . import translate as tr
+    _check_text(text)
+    if target not in tr.LANGS:
+        raise BadInput('target must be "en" (Swedish to English) or "sv" (English to Swedish)')
+    if len(text) > 6000:
+        raise BadInput("text is limited to 6000 characters; translate it in parts")
+    return _go(Roster.coerce(cfg), "translate", lambda order=None: (tr.task(target) + (f" {hint}" if hint else ""), tr.SCHEMA),
+               text, "translation", None, sensitive, check=tr.make_check(text))

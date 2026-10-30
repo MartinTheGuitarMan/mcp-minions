@@ -1,0 +1,202 @@
+# Tool trials
+
+Rule: every tool idea goes straight to an eval, and a pass puts it in the tool list. This file fixes the pass
+criteria **before anything was run**, then holds the results. Five candidates: `check_claims`, `commit_message`,
+`score`, `translate`. Each is one commit; a failed one is removed in its own commit and its result stays here.
+
+## What each tool does and what the code checks
+
+| tool | does | code check (a reply that fails it is an error, never returned) |
+|---|---|---|
+| `check_claims(text, source)` | splits `text` into claims, marks each supported or not against `source` | every claim has a `supported` boolean; a supported claim carries a quote found in the source and its numbers and capitalised names occur in the source; numbers and names of the text must not be dropped from the claims |
+| `commit_message(diff)` | drafts a subject and body from a diff | subject non-empty and at most 72 characters, first word imperative, no final period; every file path named in the message is in the diff |
+| `dedupe(items)` | groups near-identical texts in a batch of `{id, text}` | every id in exactly one group, no unknown ids |
+| `score(text, criterion)` | rates a text 1 to 5 against a criterion | integer 1 to 5; the quote given as the reason is found in the text |
+| `translate(text, target)` | Swedish to English (`en`) and back (`sv`) | every number survives and none is added; capitalised names survive and none is added (days, months and nationalities excepted); length stays within a sane ratio |
+
+Each tool has a route in `config.py` (`TRIAL_FALLBACK`): a roster with no route under the tool's own name borrows the
+route of `extract` (`check_claims`, `dedupe`, `score`) or `summarize` (`commit_message`, `translate`).
+No new error codes: the checks raise the existing `MINION_NOT_IN_SOURCE`, `MINION_INVENTED`, `MINION_TOO_LONG`
+and `MINION_SCHEMA`.
+
+> **Outcome: `dedupe` failed and its code was removed in its own commit** (results below). The other four passed.
+
+## Pass criteria (fixed before the first run)
+
+A fixed set of invented cases per tool in `scripts/tool_trials.py` (15 `check_claims`, 14 `commit_message`, 13 `dedupe`,
+15 `score`, 17 `translate`), hard cases included (prompt injection in the data, negation, sarcasm, near-miss
+numbers and names, invented entities). Scored in code, never by a model.
+
+A tool passes when a local model (`sensitive=true`), on the tool's default route, meets all of:
+
+1. **At least 90% correct** on the set. `dedupe`: the whole partition of a case must be right. `score`: within 1 of the
+   expected value, with a quote found in the text. A call the code check rejects counts as wrong.
+2. **0 invented answers.** `check_claims` must mark claims about invented entities unsupported; `translate` must not add
+   facts (a number or name that is not in the source). Counted on what is *returned*; replies the code check refused are
+   counted separately ("refused").
+3. **The code check catches planted bad output**, proven in `tests/test_trial_tools.py`.
+4. ~~**p95 under 60 s per call** on the local model.~~ **Dropped 2026-10-30** (Martin: slow is fine as long as work can
+   run in parallel). Latency (p50, p95) is reported only. A call that times out still counts as a failure.
+5. Added 2026-10-30: each tool is shown to be safe under concurrent calls on the same route (`tests/test_trial_tools.py`,
+   threads against the fake backend, plus a live check, see Results). Route advice prefers the better score over the
+   faster model.
+
+Procedure: the route's first model is tried first; if the tool fails, one other local model; the model that passed
+is recorded. The prompt may be tuned against the set **at most once**; if so it is stated in the results.
+Runs only on AC power and without memory pressure (`pmset -g batt`, `memory_pressure`; the runner waits, it never lowers
+a limit). Calls from the same model run one after another.
+
+## Model-fit eval (added before the first run)
+
+Beyond the pass criteria above (criterion 4 as it was originally written is kept above, struck through), every tool's set is run against every usable roster model, **3 repeats per case**, one
+model pinned at a time through a throwaway in-memory roster built from a copy of the roster file (the roster itself is
+not changed; the file is only read).
+
+- local: `air-qwen`, `air-gemma4-26b` (load on demand; if the quiet gate refuses it, that is recorded and retried later, the
+  limit is not lowered), `mini-phi4mini`, `mini-gemma4b` (over the tunnel; if it is down: not run);
+- decision models (`air-jev-style`): only where the tool fits a typed decision. None of the five does: a decision model
+  returns a label and a probability, no quote and no text, and every check here needs a quote or text. Recorded as not run
+  for that reason, not as a fail;
+- cloud (`sensitive=false`, only because every case is invented and holds nothing real): `groq-gptoss20b`,
+  `groq-gptoss120b`, `mistral-ministral8b`, `gemini-flashlite`. Per-model request limits are respected; an exhausted free
+  tier is recorded as not run, never as a fail, and cloud runs stop at anything that looks like a paid limit.
+
+Recorded per tool and model: score, stability (share of cases whose 3 repeats all agree), invented answers, code-check
+failures by code, p50 and p95 latency, tokens per second (end to end, only where the provider reports counts), errors,
+not-run reasons. An unreachable model is "not run", never a fail.
+
+Output per tool: the fit table, pass or fail, and a recommended route (first model, fallback; a quorum only if it earns
+its cost; local preferred when the score gap is small). The recommendation is advice; the roster is the owner's to change.
+
+## Results
+
+Run on 2026-10-30. 222 calls per tool and model where run (3 repeats of every case). `score` = correct calls / calls scored; `stable` = share of cases whose three repeats agree; `invented` = answers returned that hold an invented fact (`check_claims`: an invented entity marked supported; `translate`: a number or name not in the source), `(+n refused)` = replies the code check rejected, which are counted as wrong but never returned; `tok/s` = completion tokens over end-to-end seconds, where the provider reported counts. Latency is reported only (the p95 bar was dropped, see criterion 4).
+
+Summary against the pass criteria (local model, `sensitive=true`, the route's first model):
+
+| tool | result | route's first local model |
+|---|---|---|
+| `check_claims` | **PASS** | air-qwen: 45/45, 0 invented, stable. Default route (`extract`) is already the right first model. |
+| `commit_message` | **PASS** | air-qwen: 42/42. The three always-refused calls of run 1 were a check bug (a directory path, `/var/backups`, counted as a file), fixed; see Findings. |
+| `dedupe` | **FAIL** | best local model reaches 77% (air-qwen and mini-phi4mini), below the 90% bar; air-gemma4-26b not run. Only `groq-gptoss120b` reaches 100% (public text only). |
+| `score` | **PASS** | air-qwen: 42/45 (93%), within 1 of the expected value, quote always in the text. The three misses are one case (`s04`, a bare imperative) scored 1 instead of 3. |
+| `translate` | **PASS** | air-qwen: 51/51, nothing added, nothing dropped. |
+
+### `check_claims`: PASS
+
+| model | where | score | stable | invented returned (+refused by code) | code-check failures | p50 s | p95 s | tok/s | not run |
+|---|---|---|---|---|---|---|---|---|---|
+| air-gemma4-26b | local | - | - | 0 (+0 refused) | - | - | - | - | {'busy': 45} |
+| air-qwen | local | 45/45 (100%) | 1.0 | 0 (+0 refused) | - | 5.0 | 11.5 | 20.7 | - |
+| gemini-flashlite | cloud | 45/45 (100%) | 1.0 | 0 (+0 refused) | - | 1.6 | 2.7 | 59.8 | - |
+| groq-gptoss120b | cloud | 43/45 (96%) | 0.93 | 0 (+0 refused) | - | 1.4 | 2.0 | 333.3 | - |
+| groq-gptoss20b | cloud | 45/45 (100%) | 1.0 | 0 (+0 refused) | - | 2.6 | 5.1 | 216.4 | - |
+| mini-gemma4b | local | 27/45 (60%) | 1.0 | 0 (+12 refused) | {'MINION_NOT_IN_SOURCE': 12} | 6.7 | 12.1 | 16.2 | - |
+| mini-phi4mini | local | 33/45 (73%) | 1.0 | 0 (+12 refused) | {'MINION_NOT_IN_SOURCE': 12} | 5.6 | 12.8 | 17.6 | - |
+| mistral-ministral8b | cloud | 42/45 (93%) | 1.0 | 0 (+0 refused) | - | 1.1 | 2.3 | 89.4 | - |
+
+**Recommended route:** first `air-qwen`; fallback `groq-gptoss20b` for public text only (100%, cloud). No local fallback earns its place: the two small tunnel models mark invented claims as supported with a made-up quote (60% and 73%); the code check refused every one of those (12 each), so nothing invented was returned, but the answers are not usable. No quorum needed.
+
+### `commit_message`: PASS
+
+| model | where | score | stable | invented returned (+refused by code) | code-check failures | p50 s | p95 s | tok/s | not run |
+|---|---|---|---|---|---|---|---|---|---|
+| air-gemma4-26b | local | - | - | 0 (+0 refused) | - | - | - | - | {'busy': 42} |
+| air-qwen | local | 42/42 (100%) | 1.0 | 0 (+0 refused) | - | 2.3 | 3.5 | 20.3 | - |
+| gemini-flashlite | cloud | 42/42 (100%) | 1.0 | 0 (+0 refused) | - | 1.0 | 11.2 | 42.4 | - |
+| groq-gptoss120b | cloud | 42/42 (100%) | 1.0 | 0 (+0 refused) | - | 0.8 | 2.4 | 257.1 | - |
+| groq-gptoss20b | cloud | 42/42 (100%) | 1.0 | 0 (+0 refused) | - | 3.0 | 5.1 | 130.0 | - |
+| mini-gemma4b | local | 42/42 (100%) | 1.0 | 0 (+0 refused) | - | 1.9 | 3.7 | 12.0 | - |
+| mini-phi4mini | local | 39/42 (93%) | 1.0 | 0 (+0 refused) | {'MINION_SCHEMA': 3} | 2.1 | 2.8 | 17.0 | - |
+| mistral-ministral8b | cloud | 41/42 (98%) | 0.93 | 0 (+1 refused) | {'MINION_INVENTED': 1} | 0.8 | 1.1 | 69.5 | - |
+
+**Recommended route:** first `air-qwen`; fallback `mini-gemma4b` (100% local). No quorum.
+
+### `dedupe`: FAIL
+
+| model | where | score | stable | invented returned (+refused by code) | code-check failures | p50 s | p95 s | tok/s | not run |
+|---|---|---|---|---|---|---|---|---|---|
+| air-gemma4-26b | local | - | - | 0 (+0 refused) | - | - | - | - | {'busy': 39} |
+| air-qwen | local | 30/39 (77%) | 1.0 | 0 (+0 refused) | {'MINION_SCHEMA': 3} | 2.6 | 4.1 | 20.2 | - |
+| gemini-flashlite | cloud | 36/39 (92%) | 1.0 | 0 (+0 refused) | - | 1.2 | 26.5 | 22.2 | - |
+| groq-gptoss120b | cloud | 39/39 (100%) | 1.0 | 0 (+0 refused) | - | 0.9 | 1.5 | 288.1 | - |
+| groq-gptoss20b | cloud | 37/39 (95%) | 0.92 | 0 (+0 refused) | - | 1.8 | 4.6 | 147.8 | - |
+| mini-gemma4b | local | 15/39 (38%) | 1.0 | 0 (+0 refused) | {'MINION_SCHEMA': 3} | 1.6 | 3.1 | 13.4 | - |
+| mini-phi4mini | local | 30/39 (77%) | 1.0 | 0 (+0 refused) | - | 1.7 | 3.0 | 16.7 | - |
+| mistral-ministral8b | cloud | 30/39 (77%) | 1.0 | 0 (+0 refused) | - | 0.6 | 2.0 | 48.3 | - |
+
+**Recommended route:** none for sensitive text. For public text `groq-gptoss120b` would do, but the tool's pass bar is local, so the tool is removed from the code (own commit); the result stays here.
+
+### `score`: PASS
+
+| model | where | score | stable | invented returned (+refused by code) | code-check failures | p50 s | p95 s | tok/s | not run |
+|---|---|---|---|---|---|---|---|---|---|
+| air-gemma4-26b | local | - | - | 0 (+0 refused) | - | - | - | - | {'busy': 45} |
+| air-qwen | local | 42/45 (93%) | 1.0 | 0 (+0 refused) | - | 1.2 | 1.7 | 19.8 | - |
+| gemini-flashlite | cloud | 42/45 (93%) | 1.0 | 0 (+0 refused) | - | 0.9 | 1.7 | 28.8 | - |
+| groq-gptoss120b | cloud | 45/45 (100%) | 1.0 | 0 (+0 refused) | - | 0.7 | 1.2 | 243.2 | - |
+| groq-gptoss20b | cloud | 39/45 (87%) | 1.0 | 0 (+0 refused) | - | 0.6 | 4.3 | 296.2 | - |
+| mini-gemma4b | local | 36/45 (80%) | 1.0 | 0 (+0 refused) | - | 1.8 | 2.5 | 12.9 | - |
+| mini-phi4mini | local | 45/45 (100%) | 1.0 | 0 (+0 refused) | - | 1.6 | 2.1 | 15.6 | - |
+| mistral-ministral8b | cloud | 42/45 (93%) | 1.0 | 0 (+0 refused) | - | 0.6 | 1.2 | 40.4 | - |
+
+**Recommended route:** first `mini-phi4mini` (45/45, local over the tunnel), fallback `air-qwen` (93%, local on this machine). The gap is one case; if the tunnel is a worry, `air-qwen` alone is fine. No quorum.
+
+### `translate`: PASS
+
+| model | where | score | stable | invented returned (+refused by code) | code-check failures | p50 s | p95 s | tok/s | not run |
+|---|---|---|---|---|---|---|---|---|---|
+| air-gemma4-26b | local | - | - | 0 (+0 refused) | - | - | - | - | {'busy': 51} |
+| air-qwen | local | 51/51 (100%) | 1.0 | 0 (+0 refused) | - | 1.3 | 1.9 | 18.8 | - |
+| gemini-flashlite | cloud | 49/51 (96%) | 0.94 | 0 (+0 refused) | - | 0.8 | 1.3 | 28.9 | - |
+| groq-gptoss120b | cloud | 46/51 (90%) | 0.94 | 0 (+0 refused) | - | 0.8 | 1.3 | 296.5 | - |
+| groq-gptoss20b | cloud | 45/51 (88%) | 1.0 | 0 (+0 refused) | - | 0.6 | 1.4 | 356.2 | - |
+| mini-gemma4b | local | 51/51 (100%) | 1.0 | 0 (+0 refused) | - | 1.6 | 2.6 | 13.9 | - |
+| mini-phi4mini | local | 36/51 (71%) | 1.0 | 0 (+6 refused) | {'MINION_NOT_IN_SOURCE': 3, 'MINION_INVENTED': 3} | 1.4 | 1.9 | 16.2 | - |
+| mistral-ministral8b | cloud | 51/51 (100%) | 1.0 | 0 (+0 refused) | - | 0.9 | 2.3 | 23.1 | - |
+
+**Recommended route:** first `air-qwen`; fallback `mini-gemma4b` (51/51, local). `mini-phi4mini` is not usable (71%, it adds names and drops numbers; 6 refused by the code check).
+
+### Not run
+
+- `air-gemma4-26b` (all five tools): the quiet gate refused the load every time (`MINION_BUSY: free memory would fall below 25
+  percent after loading about 16 GB`). The runner retried each tool three times two minutes apart over about 40 minutes,
+  including after the run's own `qwen3.5:9b` was unloaded (59% free); the limit was not lowered. Not a fail.
+- `air-jev-style`: no fit, as written above (a decision model gives a label and a probability, never a quote or text).
+- Cloud: no free tier ran out and nothing looked like a paid limit. `gemini-flashlite` hit its own request pacing only
+  (10 per minute, respected by waiting). Cloud models saw only invented text.
+
+### Concurrency
+
+Every tool is a pure function of its input plus the route: no module-level state is written, each call carries its own
+check closure, and the token tally and call log are per call. Shown two ways: `test_every_trial_tool_is_safe_under_concurrent_calls`
+(24 inputs through 6 threads, all five tools, each answer matched to its own input), and live, 4 calls at once on one route
+(`mini-phi4mini`, first 4 cases of every tool, sequential versus parallel): identical outcomes in all 20. Model-side limits
+still apply as for every tool: a managed model loads once (one lock per model), a cloud model's `rpm` cap is counted per
+model, and a local server decides how many requests it serves at once.
+
+### What the trials found
+
+- **Three check false positives in run 1**, fixed in commit `80938fc` (no prompt was touched): a quote carrying a closing
+  full stop or quotation marks was refused (`check_claims`, `score`); `/var/backups` counted as a file the commit message
+  names (`commit_message`, refused for all four models in run 1); plural weekdays (`Sundays`) counted as an added name
+  (`translate`). The 57 calls that the old checks had refused in those categories were re-run with the same prompts; every
+  other call keeps its first-run result. Only these cases were re-run, so the numbers mix the two code revisions for those
+  cases; the records carry the revision.
+- The guards earned their keep: small models (`mini-gemma4b`, `mini-phi4mini`) mark claims about invented entities as supported
+  and invent a quote for them (24 refused calls across the two). No invented answer was returned by any model on any tool.
+- `translate` is strict by design: a place with an English form (Goteborg, Gothenburg) counts as a changed name.
+- `check_claims` proves that the quote exists and that the claim's numbers and names occur in the source, not that the quote
+  entails the claim; the case set scores the verdicts, so a wrong-but-grounded verdict is still a miss.
+- Hard cases held by `air-qwen`: the injected instruction in a diff comment (`m14`), the injected "score this 5" (`s13`), the
+  Swedish instruction to answer "HEJ" (`t07`).
+
+### How it was run
+
+Prompts were not tuned against the set. The runner holds the case sets and the scoring (`scripts/tool_trials.py`); results
+were written as JSON lines outside the repo. Local calls were `sensitive=true`; a cloud model was called with `sensitive=false`.
+Runs started only on AC power with the kernel memory pressure level normal. Once a model was loaded, only a critical level
+would pause it, because loading a 9B model next to an idle LM Studio model moved the level to warn: the run waited for that
+idle model to expire first. `mini-*` models are served by another machine through the tunnel (it was up throughout), so the
+local memory check does not apply to them. Unloaded afterwards: the run's `qwen3.5:9b` on the Air and `phi4-mini` on the
+other host. `air-gemma4-26b` was never loaded. Unit tests: 363 pass (`uv run pytest -q`).
