@@ -377,3 +377,19 @@ A fail is removed in its own commit and the result stays here. The prompt-tuning
   a still-nonzero `invented`: all flagged exactly as written down, the unchanged ones not flagged (23 tests).
 - Not verified: no second real line exists yet, so real-against-real has only the identity case; the 0.10 bar is the
   README's "one case is about 12 points" reading, not tuned on data.
+
+### Result: `trial_compare`: PASS (stays in `scripts/`)
+
+- **Real result sets:** the `air-qwen` `check_claims` runs of the claims fix, old code `e60e919` against new `c33be39`, 30
+  cases x 3 repeats each. Tool output: 84/90 against 84/90, all 30 cases the same. Independent count (a one-off script over the
+  raw files, not the tool's code): 84 ok on both sides, the only non-ok cases are `h09` (3 check failures) and `h13` (3 wrong)
+  on both sides. Equal, and equal to the result recorded in "Follow-up" above.
+- **Planted flips** (10 tests): ok to wrong, wrong to ok, wrong to check failure, a partly worse case, one repeat worse,
+  a case only on one side, `not_run` records and the stop marker ignored, model and tool filters, a directory of model
+  files, bad JSON named by line. All listed; exit code 1 when any case got worse.
+- **`run` mode:** tested on a throwaway git repo (detached worktrees added, the runner executed in each, worktrees removed,
+  dry run changes nothing, `--out` inside the repo refused). Live: `check_claims`, `air-qwen`, 1 repeat, local, old `c162857`
+  against `8ccc2e3` (the claims fix is in the new code): 28/30 on both sides, 30 cases the same; the temp worktrees were
+  removed. The two misses are `h09` and `h13`, as before.
+- Not verified: the real data has no flip, so "lists a flip" rests on the planted tests; the live run has `--repeats 1`, so
+  its stability column says nothing.
