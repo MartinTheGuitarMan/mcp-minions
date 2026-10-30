@@ -264,3 +264,27 @@ local (`sensitive=true`), roster read-only.
 
 The scorer counts the last two together as "invented" and the case id says which (list above); the record of a failing case is
 reported as a failure, not tuned away. After the set is committed, no code or prompt changes: a fail is reported as a fail.
+
+### Results of the two-holes trial (2026-10-30, code `9f1887c`, set committed in `e4d1de0`)
+
+`air-qwen`, `check_claims_holes`, 24 cases x 3 repeats = 72 calls, AC power, local, roster read-only, other jobs may have
+shared the Air. **PASS on all three bars:** 72/72 correct (100%), stable 1.0, 0 wrong numbers returned as supported,
+0 claims returned that are not in the text, 0 code-check failures. Caveat: on these short invented cases `air-qwen`
+did not itself produce the two failures (it answered the number-format cases correctly and added no extra claims), so
+the trial shows that the new checks do no harm and let correct answers through; the code paths that fix the holes are
+proven by the fake-backend tests (planted `unsupported` verdicts for true claims, planted wrong numbers, planted
+source-only claims). Same limit as the first follow-up.
+
+Real pages, read-only and local (`air-qwen`, one line or bullet of the page at a time against its 6 best-matching source
+lines by word overlap; source citations and links removed from the page lines first; counts only):
+
+| page | before | after |
+|---|---|---|
+| photo dates (6 sections) | 22 supported, 7 unsupported | 22 supported, 5 unsupported (1 of them rechecked in code), 16 claims dropped as not in the text |
+| music plan | 93 supported, 12 flagged, 1 error (106) | 44 supported, 18 unsupported (5 `quote_not_found`), 1 error `no claims came back`, 22 dropped as not in the text |
+
+The dropped claims account for the inflation (the earlier counts held claims taken from the source). Without removing the
+page's own citations from each line the same run failed on 7 of 12 lines, because a citation's date is a number of the
+text that no claim repeats; that is the old "claims leave out what the text says" check, unchanged, and a reason to strip
+citations before calling the tool. The earlier before-counts may have used a different split of the page into lines, so
+the comparison is indicative only.
