@@ -232,3 +232,35 @@ findings about the cases and the check, not about the fix: h09 (`4 March 2026` a
 `MINION_INVENTED` because the month name counts as a name the source lacks, in the old and the new code alike; h13 mixes a
 wrong firmware number with a right site name in one claim, so one verdict cannot satisfy both keys (a case flaw, left in
 because both runs share it). The set still needs cases taken from real notes (private, kept out of this repo).
+
+## Follow-up 2026-10-30 (2): two holes left in `check_claims`, and their trial
+
+Criteria fixed before the new case set was written into `scripts/tool_trials.py` and before any run of it.
+
+Real runs (one sentence at a time against the best-matching lines of a source note, `air-qwen`) showed two holes:
+
+1. **Numbers.** The model itself says "unsupported" for a true claim when the number format differs (`1,712 files have
+   GPS` against the line `With GPS: 1712`). There is no flag, so the quote fix never runs. Fix in code: an unsupported
+   claim with at least one number is upgraded to supported (flag `rechecked_in_code`, quote = the source line) only when
+   every number of the claim, read as a whole number with separators ignored, occurs in one source line, at least 50%
+   of its other content words occur in that line (stemmed, stop words and "percent" ignored), the line and the claim
+   agree on negation (missing, no, not, without, lack, fail), and the claim's names pass the existing name check. A
+   wrong number is never in a line, so it stays unsupported. Claims without a number are never upgraded.
+2. **Extra claims.** Given one sentence, the model returns claims taken from the source, not from the text. Fix in
+   code: a returned claim needs at least 65% of its content words and numbers in the text (stemmed); the others are
+   removed and listed under `dropped_not_in_text`. The threshold comes from the unit tests: a claim with 3 of 5 content
+   words in the text (a source fact) is dropped, 2 of 3 and 4 of 6 (a reworded condensed claim) stay. The existing
+   check that no number or name of the text drops out of the claims is unchanged.
+
+**Set:** 24 new invented cases (`scripts/tool_trials.py`, ids `r01` to `r24`, runner name `check_claims_holes`): table-like
+source lines, number formats, condensed sentences, wrong numbers (ids marked `w`), claims missing from the source, and
+cases where the source holds a tempting extra fact (ids marked `x`). `air-qwen`, `check_claims` only, 3 repeats, AC power,
+local (`sensitive=true`), roster read-only.
+
+**Pass:** all of
+- at least 90% of calls correct (a call the code check rejects counts as wrong);
+- every wrong number stays unsupported (0 wrong-number claims returned as supported);
+- 0 claims returned that are not in the text (also 0 invented-entity claims returned as supported).
+
+The scorer counts the last two together as "invented" and the case id says which; the record of a failing case is
+reported as a failure, not tuned away. After the set is committed, no code or prompt changes: a fail is reported as a fail.
