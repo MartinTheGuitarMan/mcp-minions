@@ -580,3 +580,21 @@ def load_model(cfg, name: str) -> dict:
 def unload_model(cfg, name: str) -> dict:
     """Unload a managed model that minions itself loaded."""
     return manage.unload(Roster.coerce(cfg), name)
+
+
+def check_claims(cfg, text: str, source: str, hint: str = "", sensitive: bool = True) -> dict:
+    """Split text into claims and mark each supported or not against source. Returns {"claims": [{claim, supported,
+    quote}]}. A supported claim needs a quote found in the source; a claim with a number or name the source lacks
+    cannot be supported (MINION_NOT_IN_SOURCE, MINION_INVENTED); a claim of the text that was left out is a schema
+    failure."""
+    from . import claims
+    _check_text(text)
+    _check_text(source)
+    if len(text) > 6000 or len(source) > 12000:
+        raise BadInput("text is limited to 6000 characters and source to 12000")
+    clean = lambda t: t.replace("=====", "== ==")
+    data = f"=====TEXT=====\n{clean(text)}\n=====SOURCE=====\n{clean(source)}"
+    check = claims.make_check(text, source, _quote_found)
+    return _go(Roster.coerce(cfg), "check_claims", lambda order=None: (claims.TASK + (f" {hint}" if hint else ""),
+                                                                       claims.SCHEMA), data, "claims", None, sensitive,
+               check=check)
