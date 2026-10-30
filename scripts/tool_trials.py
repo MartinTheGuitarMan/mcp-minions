@@ -251,6 +251,10 @@ def cases(tool: str) -> list:
 
 
 # ---------------------------------------------------------------- runner
+REV = subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "--short", "HEAD"],
+                     capture_output=True, text=True).stdout.strip()   # which code produced a record
+
+
 def sh(cmd: list) -> str:
     return subprocess.run(cmd, capture_output=True, text=True).stdout
 
@@ -358,7 +362,7 @@ def run(args) -> int:
                         stop_reason = "paid or quota limit"
                     if rec["status"] == "not_run" and rec["reason"] == "rate_limited":
                         rec["reason"] = "rate_limited_after_retries"
-                    rec.update(tool=tool, model=model, case=cid, rep=rep, cloud=cloud, ts=round(time.time()))
+                    rec.update(tool=tool, model=model, case=cid, rep=rep, cloud=cloud, ts=round(time.time()), rev=REV)
                     with path.open("a") as f:
                         f.write(json.dumps(rec) + "\n")
                     print(f"{model} {tool} {cid}.{rep}: {rec['status']}{' ' + rec['code'] if rec['code'] else ''} {rec['latency_s']}s", file=sys.stderr)

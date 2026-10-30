@@ -16,6 +16,7 @@ TRANSLATED_CAPS = frozenset("""monday tuesday wednesday thursday friday saturday
 june july august september october november december english swedish norwegian danish finnish german french spanish
 italian european american british dutch maandag mandag tisdag onsdag torsdag fredag lordag sondag januari februari mars
 juni juli augusti oktober engelska svenska norska danska finska tyska franska""".split())
+_CAPS_STEMS = frozenset(c.removesuffix("s") for c in TRANSLATED_CAPS)   # "Sundays" like "Sunday"
 
 
 def task(target: str) -> str:
@@ -30,7 +31,7 @@ def _names(text: str) -> list[str]:
     out = []
     for m in values._WORD_TOKEN.finditer(text):
         w = values._ENDING.sub("", m.group(0))
-        if w and values._is_name(w, text[:m.start()]) and values._fold(w) not in TRANSLATED_CAPS:
+        if w and values._is_name(w, text[:m.start()]) and values._fold(w).removesuffix("s") not in _CAPS_STEMS:
             out.append(w)
     return out
 

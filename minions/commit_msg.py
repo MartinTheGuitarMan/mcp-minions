@@ -54,7 +54,7 @@ def named_files(message: str) -> list[str]:
     out = []
     for m in _PATH.finditer(message):
         tok = m.group(0).strip(".")
-        if "/" in tok or tok.rsplit(".", 1)[-1].lower() in FILE_EXT:
+        if tok.rsplit(".", 1)[-1].lower() in FILE_EXT and "." in tok:   # a directory like /var/backups is not a file
             out.append(tok)
     return out
 

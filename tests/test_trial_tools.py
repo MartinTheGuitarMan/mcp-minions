@@ -207,3 +207,29 @@ def test_translate_input_checks(cfg):
         tools.translate(cfg, "", "en")
     with pytest.raises(BadInput):
         tools.translate(cfg, "x" * 6001, "en")
+
+
+# ---------------------------------------------------------------- fixes found by trial run 1 (docs/tool-trials.md)
+def test_quote_may_carry_a_closing_full_stop_or_quotation_marks(fake, cfg):
+    reply(fake, claims=[claim("Entry was free.", True, "“Entry was free.”")])
+    tools.check_claims(cfg, "Entry was free.", SRC)
+    reply(fake, score=4, quote="Please send.")
+    tools.score(cfg, "Please send the report", "politeness")
+    reply(fake, score=4, quote="Please send the invoice.")   # still verbatim-or-nothing
+    with pytest.raises(NotInSource):
+        tools.score(cfg, "Please send the report", "politeness")
+
+
+def test_commit_message_may_mention_a_directory_but_not_an_unknown_file(fake, cfg):
+    reply(fake, subject="Back up the site", body="Archives /var/backups/site.tgz nightly.")
+    tools.commit_message(cfg, DIFF)
+    reply(fake, subject="Fix off-by-one", body="Writes to /var/backups nightly.")
+    tools.commit_message(cfg, DIFF)
+    reply(fake, subject="Fix off-by-one", body="Also changes setup.cfg.")
+    with pytest.raises(Invented):
+        tools.commit_message(cfg, DIFF)
+
+
+def test_translate_accepts_plural_weekdays(fake, cfg):
+    reply(fake, translation="The train does not run on Sundays.")
+    tools.translate(cfg, "Tåget går inte på söndagar.", "en")

@@ -583,6 +583,11 @@ def unload_model(cfg, name: str) -> dict:
     return manage.unload(Roster.coerce(cfg), name)
 
 
+def _quote_in(quote: str, source: str) -> bool:
+    """_quote_found, ignoring punctuation the model put around the quote (a closing full stop, quotation marks)."""
+    return _quote_found(quote.strip().strip(".,;:!?\"'\u201c\u201d\u2018\u2019()[]").strip(), source)
+
+
 def check_claims(cfg, text: str, source: str, hint: str = "", sensitive: bool = True) -> dict:
     """Split text into claims and mark each supported or not against source. Returns {"claims": [{claim, supported,
     quote}]}. A supported claim needs a quote found in the source; a claim with a number or name the source lacks
@@ -595,7 +600,7 @@ def check_claims(cfg, text: str, source: str, hint: str = "", sensitive: bool = 
         raise BadInput("text is limited to 6000 characters and source to 12000")
     clean = lambda t: t.replace("=====", "== ==")
     data = f"=====TEXT=====\n{clean(text)}\n=====SOURCE=====\n{clean(source)}"
-    check = claims.make_check(text, source, _quote_found)
+    check = claims.make_check(text, source, _quote_in)
     return _go(Roster.coerce(cfg), "check_claims", lambda order=None: (claims.TASK + (f" {hint}" if hint else ""),
                                                                        claims.SCHEMA), data, "claims", None, sensitive,
                check=check)
@@ -642,7 +647,7 @@ def score(cfg, text: str, criterion: str, hint: str = "", sensitive: bool = True
     def check(obj):
         if isinstance(obj["score"], bool) or not isinstance(obj["score"], int) or not 1 <= obj["score"] <= 5:
             raise SchemaError(f"score must be an integer from 1 to 5, got {obj['score']!r}", str(obj)[:200])
-        if not _quote_found(obj["quote"], text):
+        if not _quote_in(obj["quote"], text):
             raise NotInSource(f"the quote {obj['quote'][:60]!r} is not in the text", str(obj)[:200])
 
     return _go(Roster.coerce(cfg), "score", lambda order=None: (scoring.task(criterion.strip()) + (f" {hint}" if hint else ""),
