@@ -15,6 +15,7 @@ CONSTRAIN = ("json_schema", "json_object", "none")
 CORE_TOOLS = ("classify", "extract", "summarize")
 OPTIONAL_TOOLS = ("tag", "find_sensitive", "same", "grounded")   # a roster without a model that serves them simply has no route
 TOOLS = CORE_TOOLS + OPTIONAL_TOOLS
+ROUTE_ALIASES = {"summarize_url": "summarize"}   # these tools share another tool's route (and its caps)
 ASK = "ask"   # open questions: only models marked "knowledge" (they passed the hippo test) may serve it
 VOTING_TOOLS = ("classify", "grounded")   # several fast models vote (quorum), a decision model may vote or answer first
 KINDS = ("fast", "reasoning", "decision")   # decision: System One model, voting tools only
@@ -167,7 +168,9 @@ class Roster:
 
     @classmethod
     def single(cls, cfg: Config) -> "Roster":
-        return cls({cfg.name: cfg}, {t: Route((cfg,), None, 1) for t in TOOLS}, cfg.max_file_bytes)
+        routes = {t: Route((cfg,), None, 1) for t in TOOLS}
+        routes.update({a: routes[t] for a, t in ROUTE_ALIASES.items()})
+        return cls({cfg.name: cfg}, routes, cfg.max_file_bytes)
 
     @classmethod
     def coerce(cls, x) -> "Roster":
@@ -292,4 +295,7 @@ class Roster:
             if debias is None:   # auto: worth the extra call only when a judge can resolve a mismatch
                 debias = tool == "classify" and len(fast) == 1 and judge is not None
             routes[tool] = Route(fast, judge, quorum, bool(debias) and tool == "classify" and len(fast) == 1, fallback, shortcut)
+        for alias, target in ROUTE_ALIASES.items():
+            if target in routes:
+                routes[alias] = routes[target]
         return cls(models, routes, max_file_bytes, meta)

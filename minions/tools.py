@@ -9,7 +9,7 @@ import jsonschema
 
 import time
 
-from . import calllog, engine, gitdiff, lifecycle, manage, ratelimit, router, tokens, values
+from . import calllog, engine, fetch, gitdiff, lifecycle, manage, ratelimit, router, tokens, values
 from .config import ASK, Roster
 from .errors import BadConfig, BadInput, Busy, MinionDown, MinionError, NoQuorum, PrivacyRefused, RateLimited, SchemaError
 
@@ -119,7 +119,7 @@ def extract(cfg, text: str, schema: dict, hint: str = "", sensitive: bool = True
                check=check)
 
 
-def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> dict:
+def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True, tool: str = "summarize") -> dict:
     _check_text(text)
     if not 5 <= max_words <= 1000:
         raise BadInput("max_words must be between 5 and 1000")
@@ -127,8 +127,26 @@ def summarize(cfg, text: str, max_words: int = 100, sensitive: bool = True) -> d
               "required": ["summary"], "additionalProperties": False}
     task = (f"Summarize the data in at most {max_words} words. Use only numbers, dates and names that the data "
             "states, written as the data writes them.")
-    return _go(cfg, "summarize", lambda order=None: (task, schema), text, "summary", None, sensitive,
+    return _go(cfg, tool, lambda order=None: (task, schema), text, "summary", None, sensitive,
                check=values.make_summary_check(text, max_words))
+
+
+URL_TEXT_CHARS = 8000   # as CHUNK_CHARS: a page longer than this is summarized from its start, and says so
+
+
+def summarize_url(cfg, url: str, max_words: int = 100, sensitive: bool = True) -> dict:
+    """Fetch one public http(s) page (see fetch.py for the guards) and summarize its text with summarize's content
+    check. The page text is public but the call stays sensitive=True unless the caller says otherwise."""
+    if not isinstance(url, str) or not url.strip():
+        raise BadInput("url must be a non-empty string")
+    _routed(cfg, "summarize")
+    final, ctype, raw = fetch.fetch(url)
+    text = fetch.page_text(ctype, raw)
+    if not text.strip():
+        raise BadInput("the page has no readable text")
+    truncated = len(text) > URL_TEXT_CHARS
+    out = summarize(cfg, text[:URL_TEXT_CHARS], max_words, sensitive, tool="summarize_url")
+    return {**out, "url": final, "truncated": truncated}
 
 
 def _check_unique_labels(obj: dict) -> None:

@@ -78,3 +78,9 @@ class Busy(MinionError):
 class LoadFailed(MinionError):
     """The runtime tried to load or unload a model and failed, or the model is not resident afterwards."""
     code = "MINION_LOAD_FAILED"
+
+
+class RefusedAddress(MinionError):
+    """summarize_url: the url's host is local, internal, private or otherwise not a public address (also checked
+    after every redirect). Nothing was fetched from it."""
+    code = "MINION_REFUSED_ADDRESS"
