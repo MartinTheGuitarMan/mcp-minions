@@ -367,3 +367,13 @@ A fail is removed in its own commit and the result stays here. The prompt-tuning
 - **Limits:** only the citation shapes in the wiki's own rules are known; other shapes pass through untouched (never
   wrongly removed, per the tests). A link's text is kept, so `[[page|alias]]` leaves `alias` in the sentence. Frontmatter is not
   handled. Wiring it into the call path (a `strip_citations` option on `check_claims`) is a separate, later choice.
+
+### Result: `report_diff`: PASS (stays in `scripts/`)
+
+- The real `accuracy.jsonl` line (the one the weekly job wrote on 2026-10-30; only one exists so far) compared with itself:
+  no flag. 16 planted pairs made by editing that line (score drop 0.25, exactly 0.10, 0.0625; a rise; a tool no longer scored;
+  a tool missing; `invented` up; a new error code; an old one more often; the same count; partial; other answering models;
+  roster hash; sensitive flipped; p95 doubled; p95 up under twofold), plus an older-version line, an improvement and
+  a still-nonzero `invented`: all flagged exactly as written down, the unchanged ones not flagged (23 tests).
+- Not verified: no second real line exists yet, so real-against-real has only the identity case; the 0.10 bar is the
+  README's "one case is about 12 points" reading, not tuned on data.
