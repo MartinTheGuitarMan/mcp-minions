@@ -255,12 +255,15 @@ def sh(cmd: list) -> str:
     return subprocess.run(cmd, capture_output=True, text=True).stdout
 
 
-def machine_ok() -> tuple[bool, str]:
-    """AC power and no memory pressure (free percentage at least 25)."""
+def machine_ok(starting: bool) -> tuple[bool, str]:
+    """AC power, and the kernel's memory pressure level: normal (1) before a model's run starts loading anything;
+    once the run is going, only a critical level (4) pauses it, since the model it loaded can itself move the level
+    to warn (2). The free percentage from `memory_pressure` is printed for the record."""
     ac = "AC Power" in sh(["pmset", "-g", "batt"])
-    m = re.search(r"free percentage:\s*(\d+)%", sh(["memory_pressure"]))
-    free = int(m.group(1)) if m else 0
-    return ac and free >= 25, f"ac={ac} free={free}%"
+    m = re.search(r"level:\s*(\d+)", sh(["sysctl", "kern.memorystatus_vm_pressure_level"]))
+    level = int(m.group(1)) if m else 4
+    free = re.search(r"free percentage:\s*(\d+)%", sh(["memory_pressure"]))
+    return ac and (level == 1 if starting else level < 4), f"ac={ac} pressure_level={level} free={free.group(1) if free else '?'}%"
 
 
 def pinned_roster(raw: dict, model: str, max_file_bytes: int = 1_000_000) -> Roster:
@@ -312,24 +315,31 @@ def run(args) -> int:
     out_dir = Path(args.out).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
     tool_names = [t for t in args.tools.split(",") if t]
+    remote = {m for m in args.remote_models.split(",") if m}   # reached through a tunnel: this machine's load is not theirs
     for model in [m for m in args.models.split(",") if m]:
         cloud = bool(raw["models"][model].get("cloud"))
         rpm = (raw["models"][model].get("limits") or {}).get("rpm")
         gap = (60.0 / rpm + 0.5) if rpm else 0.0
         path = out_dir / f"{model}.jsonl"
-        stop_reason, limited_in_a_row = None, 0
+        stop_reason, limited_in_a_row, started = None, 0, False
+        done = set()   # resume: calls already answered (or wrong) in an earlier, interrupted run are not repeated
+        if path.exists():
+            done = {(r["tool"], r["case"], r["rep"]) for r in map(json.loads, path.read_text().splitlines())
+                    if r["status"] != "not_run"}
         for tool in tool_names:
-            todo = [(cid, kw, sc, rep) for cid, kw, sc in cases(tool) for rep in range(args.repeats)]
+            todo = [(cid, kw, sc, rep) for cid, kw, sc in cases(tool) for rep in range(args.repeats)
+                    if (tool, cid, rep) not in done]
             attempts = 0
             while todo and not stop_reason:
                 retry = []
                 for cid, kw, sc, rep in todo:
-                    if not cloud:
-                        ok, info = machine_ok()
+                    if not cloud and model not in remote:
+                        ok, info = machine_ok(starting=not started)
                         while not ok:   # not on AC or memory pressure: wait, never lower the limit
                             print(f"waiting ({info})", file=sys.stderr)
                             time.sleep(60)
-                            ok, info = machine_ok()
+                            ok, info = machine_ok(starting=not started)
+                        started = True
                     roster = pinned_roster(raw, model)
                     rec = one_call(tool, roster, kw, sc, sensitive=not cloud)
                     if gap:
@@ -416,6 +426,7 @@ def main(argv=None) -> int:
     r.add_argument("--roster", required=True)
     r.add_argument("--models", required=True, help="comma-separated roster model names, run one at a time")
     r.add_argument("--tools", default=",".join(TRIAL_TOOLS))
+    r.add_argument("--remote-models", default="", help="models served by another machine: no local memory check")
     r.add_argument("--repeats", type=int, default=3)
     r.add_argument("--out", required=True, help="folder for <model>.jsonl (keep it outside the repo)")
     r.set_defaults(fn=run)
