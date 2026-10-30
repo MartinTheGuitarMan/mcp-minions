@@ -1,0 +1,14 @@
+[
+  {"url": "https://en.wikipedia.org/wiki/Penguin", "keys": ["penguin", "flightless", "Southern Hemisphere", "seabird", "bird"]},
+  {"url": "https://en.wikipedia.org/wiki/Bridge", "keys": ["bridge", "span", "obstacle", "river", "valley"]},
+  {"url": "https://www.python.org/about/", "keys": ["Python", "programming", "language"]},
+  {"url": "https://www.rfc-editor.org/rfc/rfc3986.txt", "keys": ["URI", "Uniform Resource Identifier", "syntax", "generic"]},
+  {"url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/301", "keys": ["301", "redirect", "moved", "permanent"]},
+  {"url": "https://docs.python.org/3/library/datetime.html", "keys": ["date", "time", "datetime"]},
+  {"url": "https://www.sqlite.org/lang_select.html", "keys": ["SELECT", "query", "statement", "rows"]},
+  {"url": "https://www.gnu.org/licenses/lgpl-3.0.html", "keys": ["Lesser", "LGPL", "library", "GNU"]},
+  {"url": "https://opensource.org/license/bsd-3-clause", "keys": ["BSD", "license", "redistribution", "Redistribution"]},
+  {"url": "https://en.wikipedia.org/wiki/Windmill", "keys": ["windmill", "wind", "mill", "energy"]},
+  {"url": "https://www.rfc-editor.org/rfc/rfc1034.txt", "keys": ["domain", "name", "DNS", "resolver"]},
+  {"url": "https://en.wikipedia.org/wiki/Moose", "keys": ["moose", "deer", "antler", "North America"]}
+]
