@@ -69,6 +69,7 @@ def test_summary_checked_and_page_wrapped_in_data(net, fake, cfg):
 def test_invented_number_in_summary_still_fails(net, fake, cfg):
     net(pages={"https://news.example.org/a": ok()})
     say(fake, "The board approved 5 cranes.")
+    say(fake, "The board approved 5 cranes.")
     with pytest.raises(Exception, match="MINION_INVENTED"):
         tools.summarize_url(cfg, "https://news.example.org/a")
 
@@ -376,3 +377,15 @@ def test_prompt_injection_text_is_just_data(net, fake, cfg):
     tools.summarize_url(cfg, "https://news.example.org/a")
     user = fake.requests[0][1]["messages"][-1]["content"]
     assert user.count("</data>") == 1 and user.strip().endswith("</data>")
+
+
+def test_page_over_1mb_is_accepted_and_text_cut():
+    big = ("<p>" + "Harbour crane budget. " * 60000 + "</p>").encode()   # about 1.3 MB of html
+    assert len(big) > 1_000_000
+    status, headers, body = _get(_serve(big, "text/html"))
+    assert status == 200 and len(body) == len(big)
+
+
+def test_page_over_5mb_still_refused():
+    with pytest.raises(BadInput, match="larger than 5000000"):
+        _get(_serve(b"a" * 5_100_000, "text/plain"), secs=10)

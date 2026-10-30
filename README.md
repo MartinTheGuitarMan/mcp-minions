@@ -224,7 +224,7 @@ Because this lets a caller make the server fetch a URL, the guards are enforced 
 - **http and https only, default ports only** (80 and 443), no credentials in the URL.
 - **Public addresses only.** The host is resolved and every address must be public unicast: loopback, private, link-local, multicast, reserved and cloud-metadata addresses are refused, for IPv4 and IPv6, including IPv4-mapped, 6to4, NAT64 and Teredo forms. `localhost`, single-label names and `.local`, `.internal` and similar names are refused before any lookup. A refusal is `MINION_REFUSED_ADDRESS`, and nothing is fetched.
 - **Checked again after every redirect** (at most 3), and the checked address is **pinned**: the connection goes to that IP (with the original host name for the `Host` header and TLS), so DNS cannot change between check and fetch.
-- **Capped:** 15 seconds in total, 1 MB, `text/html` and `text/plain` only, no compression. Text is extracted with the standard library (scripts and styles dropped).
+- **Capped:** 15 seconds in total, 5 MB of raw download (streamed, stopped at the cap), `text/html` and `text/plain` only, no compression. Text is extracted with the standard library (scripts and styles dropped).
 - **Nothing sent but a fixed minimal header set:** no cookies, no auth headers, no secrets.
 
 Other failures (a bad URL, a timeout, too large, not text, HTTP error) are `MINION_BAD_INPUT` with the reason.

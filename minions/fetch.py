@@ -23,7 +23,7 @@ from urllib.parse import urljoin, urlsplit
 from .errors import BadInput, RefusedAddress
 
 MAX_REDIRECTS = 3
-MAX_BYTES = 1_000_000
+MAX_BYTES = 5_000_000      # raw download; streamed and stopped at the cap. The text is cut much shorter later
 TIMEOUT_S = 15.0           # total, over all redirects
 ALLOWED_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
 DEFAULT_PORTS = {"http": 80, "https": 443}
