@@ -345,7 +345,8 @@ def find_sensitive(cfg, text: str, sensitive: bool = True) -> dict:
         if s["text"] not in text:
             raise SchemaError(f"model named a span that is not in the text: {s['text'][:60]!r}", str(out)[:200])
         spans.setdefault((s["text"], s["kind"]), "model")
-    return {"found": bool(spans), "spans": [{"text": t, "kind": k, "by": by} for (t, k), by in spans.items()]}
+    res = {"found": bool(spans), "spans": [{"text": t, "kind": k, "by": by} for (t, k), by in spans.items()]}
+    return {**res, "_minion": out["_minion"]} if "_minion" in out else res
 
 
 SCAN_CHUNK_CHARS = 3000    # about 750 tokens: short enough that a small model's list of spans stays valid JSON

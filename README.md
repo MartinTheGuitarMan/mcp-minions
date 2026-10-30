@@ -163,6 +163,19 @@ MINION_ROSTER=my-roster.json uv run python scripts/eval.py --confidence --data e
 
 Pick the threshold on `dev`, then check it on `test`. The eval asks the decision model directly with the classify task text; the injection defence that runs before a live shortcut is not applied. Request shape (a `choice` question with `criteria` over the labels) follows the public Jev examples; the label is checked in code like every other model's output.
 
+## Quick accuracy check: `scripts/quick_eval.py`
+
+A small fixed set of invented cases (5 to 9 per tool) for `classify`, `tag`, `extract`, `summarize`, `grounded`, `ask` and `find_sensitive`, sent through the real routes the way a caller would and scored in code. It is meant to run weekly and take a few minutes (the full bench takes hours). `ask` includes made-up animals, papers and places: any answer that does not refuse is an invented answer and is printed on its own `INVENTED` line. `find_sensitive` includes planted fake secrets, a fake address and clean texts that must produce nothing.
+
+```bash
+MINION_ROSTER=my-roster.json MINION_ACCURACY_LOG=accuracy.jsonl uv run python scripts/quick_eval.py
+```
+
+- One JSON line per run is appended to the file `MINION_ACCURACY_LOG` names: date, a hash of the roster (models and routes, never key values), per tool the score, latency p50 and p95, which models answered and any errors or skipped cases, plus the invented count. Without the variable the summary is printed and nothing is written.
+- Calls are `sensitive=true` (local models only) unless you pass `--public`. A rate limit, a refusal by the quiet gate or privacy gate, or a tool the roster does not serve counts as skipped, not wrong; any other error counts as a wrong answer. A managed model the quiet gate refuses is failed over as usual, so the `models` field shows who really answered.
+- The run's own call log goes to `quick_eval_calls.jsonl` next to the accuracy log, so `minion_report` is not skewed. Managed models the run loaded are unloaded at the end (`--no-unload` to keep them). `--budget-s` (default 540) stops starting new cases; the line then has `"partial": true`.
+- With about 8 cases per tool one case is 12 points: look for changes between runs, not for small differences.
+
 ## Grounding check: `grounded`
 
 `grounded(claim, source)` checks one claim against one source text: a fact proposed from a note, or a sentence of a summary against the text it summarizes (it catches invented numbers, names and dates). It returns `{"verdict": "supported" | "contradicted" | "unclear", "quote": "..."}`, plus `confidence` (0 to 1) when a decision-model shortcut gave the verdict.
