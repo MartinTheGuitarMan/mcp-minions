@@ -13,6 +13,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 | `classify(text, labels, hint="")` | Picks exactly one of the given labels (1 to 50, unique). Returns `{"label": ...}`. |
 | `extract(text, schema, hint="")` | Fills an object matching your JSON Schema (`"type": "object"`). Returns the object. Every value must occur in the text, or the call fails; see [Value check](#value-check-extract). |
 | `summarize(text, max_words=100)` | Summary in at most `max_words` words (5 to 1000). Returns `{"summary": ...}`. Numbers, dates and capitalised names in it must occur in the text, or the call fails; see [Content check](#content-check-summarize). |
+| `summarize_url(url, max_words=100, sensitive=true)` | Fetch one public http(s) page and summarize it, with `summarize`'s content check. Returns `{"summary", "url", "truncated"}`. Refuses local, private and internal addresses (`MINION_REFUSED_ADDRESS`). See [Fetching a page](#fetching-a-page-summarize_url). |
 | `tag(text, labels, max_labels=3, hint="")` | Zero or more of the given labels (at most `max_labels`). Returns `{"labels": [...]}`. The schema sent to the backend has no `uniqueItems` (LM Studio's MLX models reject it with HTTP 400); a repeated label is rejected in code as `MINION_SCHEMA`, not deduped. |
 | `find_sensitive(text)` | Personal or secret-looking spans (names, emails, phones, ids, addresses, keys): patterns plus a model. Every span the model names must occur verbatim in the text, or the call fails. Returns `{"found", "spans": [{text, kind, by}]}`. |
 | `scan_diff(folder, range, chunk_chars=3000)` | `find_sensitive` over what a git commit range adds (added lines and commit messages), in chunks, before a push. Findings per chunk with `file:line`; a failing chunk does not fail the scan. Always local only. See [Diff scan](#diff-scan-scan_diff). |
@@ -29,7 +30,7 @@ The idea is "strong system, slim model": a small model is fine at reading and re
 - **Schema first, then verify.** Each call asks the backend for schema-constrained JSON, and then checks the reply with `jsonschema`. Whether a backend actually enforces the schema varies, so a reply that is not valid JSON or does not match the schema is an error, not a guess.
 - **No silent fallback.** If the backend is down you get `MINION_DOWN`, also when it drops the connection mid-request (reset, or disconnected without a response); a timeout is `MINION_BACKEND_ERROR`. Nothing is retried on another model. The one exception is a soft failure (a rate limit, or a managed model refused by the quiet gate with `MINION_BUSY`) on a route with a configured `fallback` (see cloud minions).
 - **Untrusted input.** Your text is wrapped in `<data>` tags, a closing `</data>` inside it is neutralised, and the system prompt tells the model never to follow instructions found in the data. This reduces prompt-injection risk. It is not a guarantee, which is why the output schema is checked in code.
-- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`, (managed models) `MINION_BUSY` and `MINION_LOAD_FAILED`, (extract and summarize) `MINION_EMPTY` and `MINION_NOT_IN_SOURCE`, and (summarize) `MINION_INVENTED` (a kind of `MINION_NOT_IN_SOURCE`) and `MINION_TOO_LONG`. These four are kinds of schema failure.
+- **Stable error codes:** `MINION_DOWN`, `MINION_BACKEND_ERROR`, `MINION_SCHEMA`, `MINION_BAD_INPUT`, `MINION_BAD_CONFIG`, (v0.2) `MINION_NO_QUORUM`, (v0.3) `MINION_PRIVACY` and `MINION_RATE_LIMITED`, (summarize_url) `MINION_REFUSED_ADDRESS`, (managed models) `MINION_BUSY` and `MINION_LOAD_FAILED`, (extract and summarize) `MINION_EMPTY` and `MINION_NOT_IN_SOURCE`, and (summarize) `MINION_INVENTED` (a kind of `MINION_NOT_IN_SOURCE`) and `MINION_TOO_LONG`. These four are kinds of schema failure.
 
 ## Install and run
 
@@ -213,6 +214,20 @@ A summary can be well-formed and still invent a figure, shift a date or add a na
 A failing summary is `MINION_INVENTED`, listing the tokens not found. All of these are `MINION_SCHEMA` subclasses, so they route like extract's checks: with a judge on the route, the judge repairs the summary and its repair must pass the same check (one retry); without one, the error is returned. The usage log records the kinds a judge repaired as `check_failures`.
 
 **Limits.** Each token is checked alone, so a wrong pairing of facts that each occur (`March 2026` when the source has `March` and `2026` separately, or names swapped between roles) is not caught, and neither is a false statement in lower-case words (`rose` for `fell`). Use `grounded` per sentence for that. Sentence-initial names are skipped, so an invented name that opens a sentence passes unless it is all capitals or appears again later. English month names and number words only.
+
+## Fetching a page: `summarize_url`
+
+`summarize_url(url, max_words=100, sensitive=true)` fetches one web page and runs it through `summarize` (same route, same content check against the fetched text), so a public page can be summarised without the calling model reading it. The page text is public, but the call stays `sensitive=true` by default (local models only); `sensitive=false` allows cloud models. The page is untrusted data, wrapped in `<data>` like any input. Only the first 8000 characters of the text are summarised; `truncated` says when the page was longer.
+
+Because this lets a caller make the server fetch a URL, the guards are enforced in code (`minions/fetch.py`) and tested:
+
+- **http and https only, default ports only** (80 and 443), no credentials in the URL.
+- **Public addresses only.** The host is resolved and every address must be public unicast: loopback, private, link-local, multicast, reserved and cloud-metadata addresses are refused, for IPv4 and IPv6, including IPv4-mapped, 6to4, NAT64 and Teredo forms. `localhost`, single-label names and `.local`, `.internal` and similar names are refused before any lookup. A refusal is `MINION_REFUSED_ADDRESS`, and nothing is fetched.
+- **Checked again after every redirect** (at most 3), and the checked address is **pinned**: the connection goes to that IP (with the original host name for the `Host` header and TLS), so DNS cannot change between check and fetch.
+- **Capped:** 15 seconds in total, 1 MB, `text/html` and `text/plain` only, no compression. Text is extracted with the standard library (scripts and styles dropped).
+- **Nothing sent but a fixed minimal header set:** no cookies, no auth headers, no secrets.
+
+Other failures (a bad URL, a timeout, too large, not text, HTTP error) are `MINION_BAD_INPUT` with the reason.
 
 ## Diff scan: `scan_diff`
 
