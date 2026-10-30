@@ -35,9 +35,7 @@ from minions.config import Roster  # noqa: E402
 from minions.errors import (Busy, MinionDown, MinionError, PrivacyRefused, RateLimited)  # noqa: E402
 
 TRIAL_TOOLS = ("check_claims", "commit_message", "dedupe", "score", "translate")
-IMPL = {"check_claims": ("minions.claims", "check_claims"), "commit_message": ("minions.commit_msg", "commit_message"),
-        "dedupe": ("minions.dedupe", "dedupe"), "score": ("minions.scoring", "score"),
-        "translate": ("minions.translate", "translate")}
+IMPL = {t: ("minions.tools", t) for t in TRIAL_TOOLS}   # a tool dropped after a failed trial is no longer there
 
 # ---------------------------------------------------------------- cases (all invented)
 _FEST = ("The Harbor Lights Festival ran from 12 to 14 June in the town of Velmar. About 8,400 people attended, up "
