@@ -82,6 +82,33 @@ CLAIMS = [
      [("ten years", False, 0), ("pelle vang", False, 1)]),
 ]
 
+# Hard cases added 2026-10-30 after the first set (above) proved too easy: it was prose with one fact per line, and the
+# claims came back verbatim. These follow real use: table-like source lines, numbers formatted differently in text and
+# source, a sentence that condenses two lines, a short paraphrase. A key may list spellings: "1,712|1712".
+_CAT = ("Catalogue export\nTotal records: 10174\nWith barcode: 1712\nMissing title: 38\nFolder date (upload day)\n"
+        "Branch: Velmar North\nLast audit: 2026-03-04")
+_SENS = "Sensor log\nUptime: 99.2%\nReboots: 4\nFirmware: v2.4.1\nSite: Kestrel Ridge"
+CLAIMS += [
+    ("h01", _CAT, "1,712 records have a barcode.", [("barcode", True, 0)]),
+    ("h02", _CAT, "There are 10,174 records in total.", [("10,174|10174", True, 0)]),
+    ("h03", _CAT, "38 records lack a title.", [("38", True, 0)]),
+    ("h04", _CAT, "The folder date is the upload day.", [("folder date|upload", True, 0)]),
+    ("h05", _CAT, "2,171 records have a barcode.", [("2,171|2171", False, 0)]),
+    ("h06", _CAT, "The catalogue has 10,174 records, of which 1,712 have a barcode.",
+     [("10,174|10174", True, 0), ("1,712|1712", True, 0)]),
+    ("h07", _CAT, "The catalogue holds 10,174 records and 500 of them are missing a title.",
+     [("10,174|10174", True, 0), ("500", False, 0)]),
+    ("h08", _CAT, "The export covers the Velmar North branch.", [("velmar", True, 0)]),
+    ("h09", _CAT, "The last audit took place on 4 March 2026.", [("audit", True, 0)]),
+    ("h10", _CAT, "The last audit was in 2025.", [("2025", False, 0)]),
+    ("h11", _CAT, "The folder date means the day a file was uploaded.", [("folder date|upload", True, 0)]),
+    ("h12", _SENS, "The sensor was up 99.2 percent of the time and rebooted 4 times.",
+     [("99.2", True, 0), ("reboot", True, 0)]),
+    ("h13", _SENS, "Firmware 2.5.0 runs at the Kestrel Ridge site.", [("2.5.0", False, 0), ("kestrel", True, 0)]),
+    ("h14", _SENS, "The site is run by Dunmore Telecom.", [("dunmore", False, 1)]),
+    ("h15", _SENS, "The sensor rebooted 40 times and had 99.2% uptime.", [("40", False, 0), ("99.2", True, 0)]),
+]
+
 
 def mkdiff(path: str, old: list, new: list, header: str = "") -> str:
     body = "".join(f"-{l}\n" for l in old) + "".join(f"+{l}\n" for l in new)
@@ -207,7 +234,7 @@ def score_claims(out: dict, keys: list) -> tuple[bool, bool]:
     claims = [(c["claim"].lower(), c["supported"]) for c in out["claims"]]
     ok, invented = True, False
     for key, expected, inv in keys:
-        hit = [s for text, s in claims if key in text]
+        hit = [s for text, s in claims if any(k in text for k in key.split("|"))]   # "a|b": either spelling
         if not hit or any(s is not expected for s in hit):
             ok = False
         if inv and any(hit):

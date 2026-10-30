@@ -8,7 +8,7 @@ criteria **before anything was run**, then holds the results. Five candidates: `
 
 | tool | does | code check (a reply that fails it is an error, never returned) |
 |---|---|---|
-| `check_claims(text, source)` | splits `text` into claims, marks each supported or not against `source` | every claim has a `supported` boolean; a supported claim carries a quote found in the source and its numbers and capitalised names occur in the source; numbers and names of the text must not be dropped from the claims |
+| `check_claims(text, source)` | splits `text` into claims, marks each supported or not against `source` | every claim has a `supported` boolean; a supported claim carries a quote found in the source (case, accents, punctuation and thousands separators ignored; a quote not found downgrades that claim to unsupported with flag `quote_not_found`, added 2026-10-30) and its numbers and capitalised names occur in the source; numbers and names of the text must not be dropped from the claims |
 | `commit_message(diff)` | drafts a subject and body from a diff | subject non-empty and at most 72 characters, first word imperative, no final period; every file path named in the message is in the diff |
 | `dedupe(items)` | groups near-identical texts in a batch of `{id, text}` | every id in exactly one group, no unknown ids |
 | `score(text, criterion)` | rates a text 1 to 5 against a criterion | integer 1 to 5; the quote given as the reason is found in the text |
@@ -23,7 +23,7 @@ and `MINION_SCHEMA`.
 
 ## Pass criteria (fixed before the first run)
 
-A fixed set of invented cases per tool in `scripts/tool_trials.py` (15 `check_claims`, 14 `commit_message`, 13 `dedupe`,
+A fixed set of invented cases per tool in `scripts/tool_trials.py` (15 `check_claims` plus 15 hard ones added 2026-10-30, see "Follow-up", 14 `commit_message`, 13 `dedupe`,
 15 `score`, 17 `translate`), hard cases included (prompt injection in the data, negation, sarcasm, near-miss
 numbers and names, invented entities). Scored in code, never by a model.
 
@@ -200,3 +200,35 @@ would pause it, because loading a 9B model next to an idle LM Studio model moved
 idle model to expire first. `mini-*` models are served by another machine through the tunnel (it was up throughout), so the
 local memory check does not apply to them. Unloaded afterwards: the run's `qwen3.5:9b` on the Air and `phi4-mini` on the
 other host. `air-gemma4-26b` was never loaded. Unit tests: 363 pass (`uv run pytest -q`).
+
+## Follow-up 2026-10-30: `check_claims` on real text, and why the first set was too easy
+
+The first set (c01 to c15) scored 45/45, but on the first real text the tool did badly. Each sentence was checked against
+the 6 best-matching lines of a source note: `1,712 files have GPS` against `With GPS: 1712` and `10,174` against `10174`
+came back unsupported; a short paraphrase against `... (import day)` too; and 5 of 6 errors were
+`MINION_NOT_IN_SOURCE` (1 `MINION_SCHEMA`) on sentences that condense several lines, where one unfindable quote lost the
+whole claim set. The first set was too easy because it is prose, one fact per sentence, claims that come back nearly
+verbatim, so quotes were always exact copies. Real sources are table-like lines and real sentences condense them.
+
+Fix (code, not prompt): quotes are matched with the same light normalisation `values.py` uses (case, accents,
+punctuation, thousands separators in numbers; whole words, no fuzzy matching). A supported claim whose quote is still not
+found is downgraded to unsupported with `"flag": "quote_not_found"`; the other claims stand. A reply that does not fit the
+schema still raises, a supported claim with a number or name the source lacks still raises `MINION_INVENTED`, and a
+planted invented quote is still caught (`tests/test_trial_tools.py`). The prompt was not changed.
+
+15 hard cases (h01 to h15) were added: number formats, table-like lines, sentences that condense two lines, a short
+paraphrase, near-miss numbers, invented entities. `air-qwen`, `check_claims` only, 3 repeats, old code (`e60e919`) against
+new code, same 30-case set:
+
+| code | first set (45 calls) | hard set (45 calls) | invented returned | check failures |
+|---|---|---|---|---|
+| old | 45/45 | 39/45 | 0 | `MINION_INVENTED` 3 (h09) |
+| new | 45/45 | 39/45 | 0 | `MINION_INVENTED` 3 (h09) |
+
+No difference: on invented text `air-qwen` quoted exactly and wrote number formats the way the source has them, so the
+failures of the real run did not reproduce, and these cases do not prove the fix on the model. What proves it is the fake-backend tests (number
+formats, case, punctuation, a quote that is not in the source, one bad quote among good claims). The two misses are
+findings about the cases and the check, not about the fix: h09 (`4 March 2026` against `2026-03-04`) is refused as
+`MINION_INVENTED` because the month name counts as a name the source lacks, in the old and the new code alike; h13 mixes a
+wrong firmware number with a right site name in one claim, so one verdict cannot satisfy both keys (a case flaw, left in
+because both runs share it). The set still needs cases taken from real notes (private, kept out of this repo).
