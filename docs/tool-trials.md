@@ -405,3 +405,19 @@ A fail is removed in its own commit and the result stays here. The prompt-tuning
   a quality bar would need a different check.
 - **Planted** (20 tests): no key term, an invented number, an invented name, a minion error, a non-minion exception, six
   bad page-list files, the built-in 20 unchanged and syntax-valid, and `eval_summarize_url.py` now a thin caller.
+
+### Result: `check_url_safe`: PASS (stays in `scripts/`; no MCP tool)
+
+- **24 real public urls** (the 20 built-in pages plus 4 literals and examples) all `ok`; **32 attack forms** all refused with the
+  address class's reason (loopback, private, link-local, metadata, multicast, mapped IPv6, `localhost`, `.local`,
+  `.internal`, dotless names, decimal, hex, octal and short IPv4 spellings, credentials, ports, `file:`/`ftp:`/`javascript:`,
+  empty); 61 tests. Every socket and lookup function is made to raise in the tests and the tool still answers: it opens
+  nothing. `fetch.py` is unchanged.
+- **Cross-check, outside the tool:** the 20 built-in pages and the 12 new ones (32 real urls) were also put through the fetch
+  layer's own resolution (`fetch.pick_address`, once): 0 disagreements, all public.
+- **Finding, not a hole:** `fetch.check_url` lets `http://127.1/` and `http://0x7f.0.0.1/` through its syntax stage; they are
+  refused only afterwards, when `pick_address` resolves them (checked: "resolves to a loopback address"). `check_url_safe`
+  refuses them earlier, by parsing the spelling. On this OS the system resolver reads `0177.0.0.1` as `177.0.0.1`, while `inet_aton`
+  reads it as octal `127.0.0.1`: the tool is stricter than the fetch layer there, which is the safe direction.
+- `ok` means only "no rule refuses it without a lookup"; the result says `resolved: false` and, for names, that the fetch
+  layer still resolves and pins. Nothing widens what minions can read.
