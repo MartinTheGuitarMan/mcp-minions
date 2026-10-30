@@ -213,6 +213,8 @@ A summary can be well-formed and still invent a figure, shift a date or add a na
 
 A failing summary is `MINION_INVENTED`, listing the tokens not found. All of these are `MINION_SCHEMA` subclasses, so they route like extract's checks: with a judge on the route, the judge repairs the summary and its repair must pass the same check (one retry); without one, the error is returned. The usage log records the kinds a judge repaired as `check_failures`.
 
+**One repair retry.** For `MINION_INVENTED`, `summarize`, `summarize_file` and `summarize_url` run the route once more with a task that names the invented terms and asks for a summary without them. The new reply goes through the same check and, if it fails again, that error is raised. A call saved this way shows `MINION_INVENTED` under `check_failures_repaired` in `minion_report`.
+
 **Limits.** Each token is checked alone, so a wrong pairing of facts that each occur (`March 2026` when the source has `March` and `2026` separately, or names swapped between roles) is not caught, and neither is a false statement in lower-case words (`rose` for `fell`). Use `grounded` per sentence for that. Sentence-initial names are skipped, so an invented name that opens a sentence passes unless it is all capitals or appears again later. English month names and number words only.
 
 ## Fetching a page: `summarize_url`
