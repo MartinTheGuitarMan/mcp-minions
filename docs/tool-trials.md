@@ -351,3 +351,19 @@ result worked out another way (by hand, or by an independent count); no model ne
    and an endless loop (timeout). 100%.
 
 A fail is removed in its own commit and the result stays here. The prompt-tuning rule does not apply (no prompts).
+
+### Result: `strip_citations`: PASS (stays in `scripts/`)
+
+- **Cases:** 20 wiki-shaped lines (invented content; `(source: raw/...)`, `(sources: ...)`, `(conversation <date>)`, wiki and
+  markdown links, footnote marks, bare and angle urls, images, a table row, an indented bullet, an empty line, and lines
+  whose parentheses are not citations). 20/20 equal to the expected line; all idempotent; every number outside a citation
+  survives (`tests/test_strip_citations.py`, 45 tests). One real bug found on the way and fixed before the run: bracket
+  citations were matched before markdown links, so `[source](url)` left `(url)` behind.
+- **Value test**, live, `air-qwen`, `sensitive=true`, 8 invented lines against an invented source note, 1 repeat
+  (`evals/strip_citations_value.py`): as written 4 of 8 calls failed with `claims leave out what the text says` (the
+  citation's date digits: `2026`, `10`, `10`), and 4 of 8 returned an extra unsupported claim made from the citation; stripped
+  0 of 8 failed and every line came back with only its own claims. Bar met (0 "leaves out" errors, no more errors than
+  without).
+- **Limits:** only the citation shapes in the wiki's own rules are known; other shapes pass through untouched (never
+  wrongly removed, per the tests). A link's text is kept, so `[[page|alias]]` leaves `alias` in the sentence. Frontmatter is not
+  handled. Wiring it into the call path (a `strip_citations` option on `check_claims`) is a separate, later choice.
