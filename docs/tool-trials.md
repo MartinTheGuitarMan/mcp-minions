@@ -450,3 +450,53 @@ Not started here: `write_code` (the coding bench is evaluating it) and `link_ent
   SkyLink repo. Not started, as instructed when the log is unclear. Needs its owner to say what the signatures are
   before an eval can be written. It may turn out to be plain code (a table of ranges), which would put it in that repo and not
   here.
+
+## `commit_message_staged` trial (2026-10-31)
+
+`commit_message` refuses a plain summary because it needs a real diff, so a caller has to paste one. This trial is for
+`commit_message_staged(folder, hint="")`, which reads the staged diff itself. Martin approved this widening on 2026-10-31:
+**one new git read, `git diff --cached`, and nothing else.** The criteria below are fixed before any model is run.
+
+### What the tool does
+
+- Reads the staged changes of the git work tree `folder` with one fixed argument list: `git diff --cached --no-color
+  --no-ext-diff --no-textconv --find-renames --src-prefix=a/ --dst-prefix=b/ --`. No shell, no caller-controlled option
+  or path (the caller supplies only the folder), the same safe `-c` options and `GIT_*` environment handling as
+  `scan_diff` (`gitdiff.py`), timeout and a raw output cap.
+- Binary files and files that are not UTF-8 are left out of what the model sees and are reported in `skipped`.
+- Refuses, never cuts short: more than 12000 characters of text diff (the `commit_message` limit), a non-repo folder,
+  nothing staged (or only skipped files staged).
+- Always local (`sensitive=true`, no parameter): the staged diff is the most private text there is.
+- The reply goes through the `commit_message` code check unchanged (`commit_msg.make_check`): subject non-empty, at most
+  72 characters, imperative first word, no final period, every file the message names is in the staged diff.
+- Route: `commit_message_staged` borrows the route of `commit_message` (`TRIAL_FALLBACK`), so a roster that routes
+  `commit_message` needs no change.
+
+### Pass criteria (at least as strict as `commit_message`)
+
+A local model on the tool's route (`air-qwen`, then fallback `mini-gemma4b`), `sensitive=true`, **3 repeats** of every case:
+
+1. **Scored set of 30 invented staged diffs** in throwaway temp repos, built by `scripts/staged_trial.py`: a tuning-free
+   **first set of 20** and a **fresh set of 10 written after any fix** (committed only after the first set was run and any fix
+   was made; neither the models nor the code are tuned on it). The cases are not only easy: multi-file diffs, renames (with and
+   without edits), deletions, a new file in a repo with no commit yet, a binary file staged next to a text change, a lock
+   file, a mode change, a prompt-injection comment in the diff. Scored in code, never by a model.
+2. **At least 90% correct, on the first set and on the fresh set separately** (and over both together), per model.
+   A call the code check refuses counts as wrong. A correct answer has a subject or body containing one of the case's
+   keywords and no banned word, and passes the check.
+3. **0 invented answers returned**: a message naming a file that is not in the staged diff is never returned. Counted by a
+   scorer independent of `commit_msg.named_files` (any file-like token in the reply that is not one of the staged paths);
+   refused replies are counted separately.
+4. **The code check catches planted bad output**, shown by tests that go through the tool: a subject over 72 characters, a
+   non-imperative first word, a final period, an invented file (in subject and in body), an empty subject.
+5. **Safe under concurrent calls** on one route (threads against the fake backend), and the tool never changes the repo (the
+   index and work tree are identical before and after).
+6. **Security tests pass**: a hostile repo config (`diff.external`, textconv, `core.fsmonitor`, aliases, hooks) runs nothing; a
+   non-repo folder, an empty stage, an over-size diff and a skipped binary all behave as above; `GIT_*` variables in the
+   environment cannot point the read at another repository.
+7. **Latency (p50, p95) is reported**, not a pass bar. A call that times out still counts as a failure.
+
+Procedure: runs only on AC power and without memory pressure (as the other trials); the route's first model is tried
+first and the fallback is run too; the prompt is shared with `commit_message` and is not changed for this tool. If a fix is
+made after the first set, it is stated here, and the fresh set is run once on the fixed code. A fail is logged here with its
+reason and the tool is removed from the code.
