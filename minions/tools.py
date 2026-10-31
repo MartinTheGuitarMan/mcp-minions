@@ -657,6 +657,31 @@ def commit_message(cfg, diff: str, hint: str = "", sensitive: bool = True) -> di
                sensitive, check=commit_msg.make_check(files))
 
 
+def commit_message_staged(cfg, folder: str, hint: str = "") -> dict:
+    """commit_message over the staged diff of a git work tree (gitdiff.read_staged: one fixed `git diff --cached`).
+    Always local only. Returns {"subject", "body", "files", "skipped"}; same checks as commit_message."""
+    from . import commit_msg
+    if not isinstance(hint, str) or len(hint) > 300:
+        raise BadInput("hint must be a string of at most 300 characters")
+    roster = _routed(cfg, "commit_message_staged")
+    router._gate(roster.route("commit_message_staged"), "commit_message_staged", True)   # no local model: refuse before reading
+    staged = gitdiff.read_staged(folder)
+    files = commit_msg.check_diff(staged.diff)
+    base_check = commit_msg.make_check(files)
+
+    def check(obj: dict) -> None:
+        base_check(obj)
+        text = obj["subject"] + "\n" + obj["body"]
+        left_out = [s["path"] for s in staged.skipped if s["path"] in text or s["path"].rsplit("/", 1)[-1] in text]
+        if left_out:   # a skipped file was not shown to the model, whatever its extension
+            raise Invented(f"the message names files that were left out of the diff: {left_out[:4]}", str(obj)[:200])
+
+    out = _go(roster, "commit_message_staged", lambda order=None: (commit_msg.TASK + (f" {hint}" if hint else ""),
+                                                                  commit_msg.SCHEMA), staged.diff, "commit", None,
+              True, check=check)
+    return {**out, "files": staged.files, "skipped": staged.skipped}
+
+
 def score(cfg, text: str, criterion: str, hint: str = "", sensitive: bool = True) -> dict:
     """Rate text 1 to 5 on a criterion. Returns {"score": int, "quote": str}: the score is an integer in range (a
     bool or a float is a schema failure) and the quote occurs in the text (MINION_NOT_IN_SOURCE)."""

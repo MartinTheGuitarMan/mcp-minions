@@ -111,6 +111,15 @@ def commit_message(diff: str, hint: str = "", sensitive: bool = True) -> dict:
 
 @mcp.tool()
 @guarded
+def commit_message_staged(folder: str, hint: str = "") -> dict:
+    """Draft a git commit message from the staged changes of a git work tree (git diff --cached; at most 12000
+    characters, binary files skipped and listed). Returns {"subject", "body", "files", "skipped"}, checked like
+    commit_message. Always local only."""
+    return tools.commit_message_staged(Roster.from_env(), folder, hint)
+
+
+@mcp.tool()
+@guarded
 def score(text: str, criterion: str, hint: str = "", sensitive: bool = True) -> dict:
     """Rate text from 1 to 5 on a criterion (1 = not at all, 5 = fully). Returns {"score": int, "quote": str}: the
     score is an integer in range and the quote, the passage that supports it, is checked in code to occur in the text."""
