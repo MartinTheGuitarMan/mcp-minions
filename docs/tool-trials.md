@@ -500,3 +500,62 @@ Procedure: runs only on AC power and without memory pressure (as the other trial
 first and the fallback is run too; the prompt is shared with `commit_message` and is not changed for this tool. If a fix is
 made after the first set, it is stated here, and the fresh set is run once on the fixed code. A fail is logged here with its
 reason and the tool is removed from the code.
+
+### Results (2026-10-31)
+
+Run by `scripts/staged_trial.py` against the real roster (read in place, not edited), each model pinned alone, 3 repeats, local
+models only, on AC power. Throwaway temp repos, invented text. 20 first-set cases (`s01`-`s20`) and 10 fresh cases (`f01`-`f10`)
+= 30 cases, 90 calls per model.
+
+**Order of events.** The first set was run first, on the code as first committed. It found two defects, both fixed in one commit
+before the fresh set was even written:
+
+1. *Trial scorer bug:* the "invented file" scorer allowed only the new path of a rename, so a correct `Rename lib/strutil.py to
+   lib/text.py` was counted as "invented" (3 + 3 calls, case `s15`, both models). Not a tool defect: the tool's own check let it
+   through, rightly. The scorer now takes every staged name straight from `git diff --cached --name-only --no-renames`.
+2. *Tool over-strictness:* the extra check "a skipped binary must not be named" refused a true message that named `logo.png` when the
+   staged HTML itself referenced `logo.png` (case `s17`, 3 + 3 calls, refused as `MINION_INVENTED`, counted wrong). A skipped file may
+   now be named if its file name occurs in the diff the model was shown; a skipped file the model never saw named is still refused.
+
+First run of set A (before the fixes): air-qwen 57/60 (95%), mini-gemma4b 57/60 (95%), 0 invented answers returned (the 3 per model
+the scorer then reported were the rename scorer bug above). Nothing else changed: no prompt change, no model change.
+
+Final numbers (set A re-run on the fixed code; set B run once, on the fixed code, after it was written):
+
+| model | set | score | stable | invented returned (+refused) | check failures | p50 s | p95 s |
+|---|---|---|---|---|---|---|---|
+| air-qwen | A, first 20 | 60/60 (100%) | 1.00 | 0 (+0) | - | 2.5 | 3.4 |
+| air-qwen | B, fresh 10 | 27/30 (90%) | 1.00 | 0 (+3) | MINION_INVENTED: 3 | 2.3 | 3.6 |
+| air-qwen | A + B | 87/90 (97%) | 1.00 | 0 | | | |
+| mini-gemma4b | A, first 20 | 60/60 (100%) | 1.00 | 0 (+0) | - | 2.2 | 4.1 |
+| mini-gemma4b | B, fresh 10 | 30/30 (100%) | 1.00 | 0 (+0) | - | 2.1 | 3.7 |
+| mini-gemma4b | A + B | 90/90 (100%) | 1.00 | 0 | | | |
+
+The only wrong answers: air-qwen on `f10` (3 of 3 repeats). Its message mentioned `about.html`, a template name that occurs only inside
+the staged Python (`render('about.html')`), not as a staged file. The shared `commit_message` check refused it as `MINION_INVENTED`; the
+refusal is the check working as designed (same behaviour as `commit_message`), and nothing was returned. That puts air-qwen exactly on
+the 90% bar for the fresh set; mini-gemma4b, the fallback, had no misses. The prompt-injection comments (`s14`, `f10`) were not followed
+by either model.
+
+### Criteria, one by one
+
+1. 30 invented staged diffs, 3 repeats, 20 + 10: **met** (cases include multi-file, renames with and without edits, deletions, a new
+   file with no commit yet, two binary files skipped, a lock file, a mode change, two prompt-injection comments).
+2. At least 90% correct on the first set, the fresh set and both: **met** for both models (air-qwen 100% / 90% / 97%; mini-gemma4b
+   100% / 100% / 100%). The fresh-set bar is met by air-qwen with no margin.
+3. 0 invented answers returned: **met**, 0 of 180 returned replies named a file outside the staged set (independent scorer).
+4. Planted bad output caught: **met**, `tests/test_commit_staged.py` (too long subject, `Fixed`/`Fixes` not imperative, final period, empty
+   subject, an invented file in subject and in body, a skipped file never shown to the model).
+5. Concurrency and no change to the repo: **met** (6 threads on one route against the fake backend; index and status identical
+   before and after a read).
+6. Security tests: **met** (`diff.external`, textconv, `diff.<driver>.command`, `core.fsmonitor`, `core.pager`, `core.hooksPath`,
+   `alias.diff`, `include.path`, `core.attributesFile`, and hook files in two places run nothing; non-repo and missing folder, empty
+   stage, only-binary stage, over-size diff, `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` ignored).
+7. Latency reported: p50 about 2.2 s, p95 about 3.5 s for both models (table above).
+
+### Verdict: PASS
+
+`commit_message_staged` passes. Route: it borrows the `commit_message` route (`air-qwen`, fallback `mini-gemma4b`), so the roster
+needs no change. Known limits: a template or other name that occurs only inside file contents is refused as invented (as in
+`commit_message`); a staged diff over 12000 characters is refused, not cut; the shared extension list does not know media
+extensions, which is why a skipped file's name is checked separately.
