@@ -134,6 +134,13 @@ def invented_files(out: dict, staged_paths: list) -> list:
     return bad
 
 
+def staged_names(repo: Path) -> list:
+    """Every path the staged change touches, old names of renames included, straight from git (not from the tool)."""
+    out = subprocess.run(["git", "-C", str(repo), "diff", "--cached", "--name-only", "--no-renames"], check=True,
+                         capture_output=True, text=True).stdout
+    return out.split()
+
+
 def score(out: dict, case: dict, staged_paths: list) -> tuple[bool, bool]:
     text = (out["subject"] + " " + out["body"]).lower()
     hit = any(k in text for k in case["kw"])
@@ -154,7 +161,7 @@ def one_call(roster: Roster, case: dict, repo: Path) -> dict:
     rec = {"status": "wrong", "invented": False, "code": None, "reason": None, "detail": ""}
     try:
         out = tools.commit_message_staged(roster, str(repo))
-        ok, inv = score(out, case, out["files"])
+        ok, inv = score(out, case, staged_names(repo))
         rec.update(status="ok" if ok else "wrong", invented=inv)
         if not ok or inv:
             rec["detail"] = json.dumps({k: out[k] for k in ("subject", "body")})[:300]

@@ -274,3 +274,18 @@ def test_trial_cases_build_and_score(tmp_path):
         assert s.files, c["id"]
     assert st.invented_files({"subject": "Fix page in other.py", "body": ""}, ["src/pager.py"]) == ["other.py"]
     assert st.invented_files({"subject": "Fix pager.py", "body": "Touches src/pager.py"}, ["src/pager.py"]) == []
+
+
+def test_a_skipped_binary_may_be_named_when_the_diff_mentions_it(fake, cfg, repo):
+    write(repo, {"README.md": "# Demo\n\n![logo](logo.png)\n", "logo.png": b"\x89PNG\x00\xff"})
+    git(repo, "add", "-A")
+    reply(fake, subject="Add logo to the readme", body="Shows logo.png in README.md.")
+    assert tools.commit_message_staged(cfg, str(repo))["skipped"] == [{"path": "logo.png", "reason": "binary"}]
+
+
+def test_trial_scorer_knows_old_names_of_renames(tmp_path):
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "scripts"))
+    import staged_trial as st
+    repo = st.build(next(c for c in st.SET_A if c["id"] == "s15"), tmp_path)
+    assert set(st.staged_names(repo)) == {"lib/strutil.py", "lib/text.py"}

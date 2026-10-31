@@ -672,8 +672,9 @@ def commit_message_staged(cfg, folder: str, hint: str = "") -> dict:
     def check(obj: dict) -> None:
         base_check(obj)
         text = obj["subject"] + "\n" + obj["body"]
-        left_out = [s["path"] for s in staged.skipped if s["path"] in text or s["path"].rsplit("/", 1)[-1] in text]
-        if left_out:   # a skipped file was not shown to the model, whatever its extension
+        left_out = [s["path"] for s in staged.skipped if (s["path"] in text or s["path"].rsplit("/", 1)[-1] in text)
+                    and s["path"].rsplit("/", 1)[-1] not in staged.diff]
+        if left_out:   # a skipped file the model never saw named anywhere in the diff, whatever its extension
             raise Invented(f"the message names files that were left out of the diff: {left_out[:4]}", str(obj)[:200])
 
     out = _go(roster, "commit_message_staged", lambda order=None: (commit_msg.TASK + (f" {hint}" if hint else ""),
