@@ -166,3 +166,44 @@ def read_range(folder, spec) -> Range:
         raise BadInput(f"the range has more than {MAX_COMMITS} commits; scan a narrower range")
     files, skipped = added_lines(diff)
     return Range(base, head, mb, len(messages), files, messages, skipped)
+
+
+MAX_STAGED_CHARS = 12000   # the commit_message limit: a bigger staged diff is refused, not cut
+
+
+@dataclass
+class Staged:
+    diff: str       # the staged text diff, binary and non-UTF-8 files left out
+    files: list     # paths in that diff
+    skipped: list   # {"path", "reason"}
+
+
+def read_staged(folder) -> Staged:
+    """The staged changes of a work tree, for commit_message_staged: the one extra git read approved on 2026-10-31.
+    One fixed argument list, nothing the caller typed reaches git except the folder (the work directory). Binary and
+    non-UTF-8 files are skipped and reported; an empty stage and an over-size diff are refused."""
+    root = work_tree(folder)
+    raw = _git(root, "diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames",
+               "--src-prefix=a/", "--dst-prefix=b/", "--")
+    if not raw.strip():
+        raise BadInput("nothing is staged; stage the changes with git add first")
+    kept, files, skipped = [], [], []
+    for block in re.split(rb"(?m)^(?=diff --git )", raw):
+        if not block.startswith(b"diff --git "):
+            continue
+        path = _path(block.split(b"\n", 1)[0].decode("utf-8", "replace"))
+        if re.search(rb"(?m)^(?:Binary files .* differ|GIT binary patch)$", block):
+            skipped.append({"path": path, "reason": "binary"})
+            continue
+        try:
+            kept.append(block.decode("utf-8"))
+        except UnicodeDecodeError:
+            skipped.append({"path": path, "reason": "not UTF-8"})
+            continue
+        files.append(path)
+    if not kept:
+        raise BadInput("only binary or non-UTF-8 files are staged (" + ", ".join(s["path"] for s in skipped)[:200] + ")")
+    diff = "".join(kept)
+    if len(diff) > MAX_STAGED_CHARS:
+        raise BadInput(f"the staged diff is {len(diff)} characters, limit is {MAX_STAGED_CHARS}; stage fewer files")
+    return Staged(diff, files, skipped)
