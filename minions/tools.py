@@ -363,6 +363,9 @@ def _rule_spans(text: str) -> dict:
     return {(m.group(0), kind): "rule" for kind, rx in SENSITIVE_RULES for m in rx.finditer(text)}
 
 
+_EMAIL_SHAPE = re.compile(r"@|[\s(\[]at[\s)\]]", re.IGNORECASE)   # "@", or a spelled-out "anna at example dot org"
+
+
 def find_sensitive(cfg, text: str, sensitive: bool = True) -> dict:
     """Spans of personal or secret-looking data, for screening text before it leaves the machine. Patterns plus a
     model; every span the model names must occur verbatim in the text or the call fails."""
@@ -379,6 +382,8 @@ def find_sensitive(cfg, text: str, sensitive: bool = True) -> dict:
     for s in out["spans"]:
         if s["text"] not in text:
             raise SchemaError(f"model named a span that is not in the text: {s['text'][:60]!r}", str(out)[:200])
+        if s["kind"] == "email" and not _EMAIL_SHAPE.search(s["text"]):
+            continue    # small models label commit hashes and file names as email
         spans.setdefault((s["text"], s["kind"]), "model")
     res = {"found": bool(spans), "spans": [{"text": t, "kind": k, "by": by} for (t, k), by in spans.items()]}
     return {**res, "_minion": out["_minion"]} if "_minion" in out else res

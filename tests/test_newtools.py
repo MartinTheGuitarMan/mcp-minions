@@ -60,6 +60,20 @@ def test_find_sensitive_nothing_found(fake, cfg):
     assert tools.find_sensitive(cfg, "The weather is mild today.") == {"found": False, "spans": []}
 
 
+def test_find_sensitive_drops_email_label_on_what_is_no_email(fake, cfg):
+    text = "Commit c162857 changed docs/daily-loop.md."
+    reply(fake, spans=[{"text": "c162857", "kind": "email"}, {"text": "docs/daily-loop.md", "kind": "email"}])
+    assert tools.find_sensitive(cfg, text) == {"found": False, "spans": []}
+
+
+def test_find_sensitive_keeps_email_with_at_sign_or_spelled_out(fake, cfg):
+    text = "Mail anna at example dot org, or bob@local, or c162857 (other)."
+    reply(fake, spans=[{"text": "anna at example dot org", "kind": "email"}, {"text": "bob@local", "kind": "email"},
+                       {"text": "c162857", "kind": "other"}])
+    got = {s["text"] for s in tools.find_sensitive(cfg, text)["spans"]}
+    assert got == {"anna at example dot org", "bob@local", "c162857"}
+
+
 def test_find_sensitive_invented_span_is_an_error(fake, cfg):
     reply(fake, spans=[{"text": "Bob Nobody", "kind": "name"}])
     with pytest.raises(SchemaError, match="not in the text"):
