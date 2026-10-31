@@ -543,7 +543,7 @@ by either model.
    file with no commit yet, two binary files skipped, a lock file, a mode change, two prompt-injection comments).
 2. At least 90% correct on the first set, the fresh set and both: **met** for both models (air-qwen 100% / 90% / 97%; mini-gemma4b
    100% / 100% / 100%). The fresh-set bar is met by air-qwen with no margin.
-3. 0 invented answers returned: **met**, 0 of 180 returned replies named a file outside the staged set (independent scorer).
+3. 0 invented answers returned: **met**, 0 of 177 returned replies named a file outside the staged set (independent scorer).
 4. Planted bad output caught: **met**, `tests/test_commit_staged.py` (too long subject, `Fixed`/`Fixes` not imperative, final period, empty
    subject, an invented file in subject and in body, a skipped file never shown to the model).
 5. Concurrency and no change to the repo: **met** (6 threads on one route against the fake backend; index and status identical
